@@ -1436,8 +1436,33 @@ func (h *Hub) Run() {
 			// guaranteed self-deadlock: Go's sync.RWMutex is not reentrant, so the same
 			// goroutine blocking on its own already-held write lock freezes Hub.Run()'s
 			// single event loop forever, taking down WS handling for every room.
+			//
+			// Skip starting a forfeit-grace timer at all if a NEWER connection for this
+			// same user+room has already taken over clientRegistry — this is the ordinary
+			// shape of a page refresh (old tab's socket tearing down while the new tab's
+			// WS has already registered) and is not a genuine "player went away" event.
+			// Relying purely on the reconnecting client's own CancelDisconnectGrace call
+			// (in the WS upgrade handler, ~50ms after registering) to cancel a
+			// not-yet-started timer is a real, confirmed race: if this unregister isn't
+			// dequeued and processed by Hub.Run()'s single event loop until AFTER that
+			// window (e.g. the loop is busy with other rooms' traffic), the timer gets
+			// started fresh here with nothing left to ever cancel it — silently
+			// forfeiting the whole game ~30s after a successful, ordinary refresh.
+			// Checking the registry's current identity directly here is race-free
+			// regardless of which order the two events actually land in, since the new
+			// connection always registers itself synchronously before this unregister
+			// case can even be reached for processing.
+			h.registryMutex.RLock()
+			supersededByNewerConnection := h.clientRegistry[client.userID] != nil &&
+				h.clientRegistry[client.userID][client.roomID] != nil &&
+				h.clientRegistry[client.userID][client.roomID] != client
+			h.registryMutex.RUnlock()
 			if wasInRoom && gameWebSocketHandler != nil {
-				gameWebSocketHandler.CleanupPlayerDisconnect(client.roomID, client.userID)
+				if supersededByNewerConnection {
+					log.Printf("🎮 [Hub.Run] Skipping forfeit-grace timer for user %d in room %d — a newer connection already replaced this one (ordinary refresh, not a real disconnect)", client.userID, client.roomID)
+				} else {
+					gameWebSocketHandler.CleanupPlayerDisconnect(client.roomID, client.userID)
+				}
 			}
 
 			// WS transport closed. Session membership is NOT removed here — the member

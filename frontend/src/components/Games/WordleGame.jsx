@@ -40,6 +40,17 @@ const CSS = `
     50%, 95% { opacity: 0; }
     100% { opacity: 1; }
   }
+  @keyframes wdlSmallReveal {
+    0%   { transform: scaleY(1); background: #1e1e20; border-color: #3a3a3c; }
+    45%  { transform: scaleY(0); background: #1e1e20; border-color: #3a3a3c; }
+    55%  { transform: scaleY(0); background: var(--tc);  border-color: var(--tc); }
+    100% { transform: scaleY(1); background: var(--tc);  border-color: var(--tc); }
+  }
+  @keyframes wdlOpponentGlow {
+    0%   { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); }
+    15%  { box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.65); }
+    100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); }
+  }
 `;
 
 // Tile for the main (self) grid
@@ -70,30 +81,84 @@ function BigTile({ letter, feedback, isCurrent, isNew, animDelay, isPop, size = 
   );
 }
 
-// Compact tile for opponent grids
-function SmallTile({ letter, feedback }) {
+// Compact tile for opponent grids. Mirrors BigTile's flip-reveal animation
+// (isNew/animDelay) — previously this had NO animation at all, so a fresh
+// opponent guess just silently popped into its final colour with nothing
+// drawing the eye to it, which is most of why a first guess landing was easy
+// to miss entirely.
+function SmallTile({ letter, feedback, isNew, animDelay = 0 }) {
   const hasFb = !!feedback;
+  const bg     = hasFb ? TILE_BG[feedback] : '#1e1e20';
+  const border = `1.5px solid ${hasFb ? TILE_BG[feedback] : '#3a3a3c'}`;
+  const anim   = isNew && hasFb ? `wdlSmallReveal 0.42s ${animDelay}s ease both` : undefined;
   return (
     <div style={{
       width: 26, height: 26,
-      background: hasFb ? TILE_BG[feedback] : '#1e1e20',
-      border: `1.5px solid ${hasFb ? TILE_BG[feedback] : '#3a3a3c'}`,
+      background: bg, border,
       color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontWeight: 'bold', fontSize: 10, borderRadius: 2, userSelect: 'none',
+      animation: anim, '--tc': TILE_BG[feedback] || '#3a3a3c',
     }}>
       {letter}
     </div>
   );
 }
 
+// Tracks a per-opponent guess count to detect a fresh guess landing, and
+// drives a short "flash" window used to (a) pick which row gets the tile
+// reveal animation and (b) pulse a highlight glow + scroll the opponent's
+// whole card into view so a new move never gets lost — even the very first
+// guess, which previously rendered with zero animation and (on a short
+// mobile viewport, stacked below other opponents) could land entirely off
+// screen with nothing to draw attention to it.
+function useNewGuessFlash(guessesLength) {
+  const [newRow, setNewRow] = useState(-1);
+  const [flash, setFlash]   = useState(false);
+  const prevLenRef = useRef(-1);
+
+  useEffect(() => {
+    if (prevLenRef.current === -1) {
+      prevLenRef.current = guessesLength; // baseline — don't animate on mount
+      return;
+    }
+    if (guessesLength > prevLenRef.current) {
+      const row = guessesLength - 1;
+      setNewRow(row);
+      setFlash(true);
+      prevLenRef.current = guessesLength;
+      const t1 = setTimeout(() => setNewRow(-1), WORD_LEN * 84 + 400);
+      const t2 = setTimeout(() => setFlash(false), 1600);
+      return () => { clearTimeout(t1); clearTimeout(t2); };
+    }
+    prevLenRef.current = guessesLength;
+  }, [guessesLength]);
+
+  return { newRow, flash };
+}
+
 function OpponentGrid({ pKey, guesses, results, eliminated, winnerKey, username }) {
   const elim = eliminated.includes(pKey);
   const won  = winnerKey === pKey;
+  const { newRow, flash } = useNewGuessFlash(guesses.length);
+  const cardRef = useRef(null);
+
+  useEffect(() => {
+    if (flash) cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [flash]);
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
+    <div
+      ref={cardRef}
+      style={{
+        display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center',
+        borderRadius: 6, padding: 4,
+        animation: flash ? 'wdlOpponentGlow 1.6s ease-out' : undefined,
+      }}
+    >
       <p style={{
         fontSize: 10, fontWeight: 600, marginBottom: 2,
-        color: won ? '#538d4e' : elim ? '#f87171' : '#9ca3af',
+        color: won ? '#538d4e' : elim ? '#f87171' : flash ? '#22d3ee' : '#9ca3af',
+        transition: 'color 0.3s',
       }}>
         {username} {won ? '🏆' : elim ? '💀' : ''}
       </p>
@@ -104,6 +169,8 @@ function OpponentGrid({ pKey, guesses, results, eliminated, winnerKey, username 
               key={col}
               letter={guesses[row]?.[col] || ''}
               feedback={results[row]?.[col] || ''}
+              isNew={row === newRow}
+              animDelay={col * 0.08}
             />
           ))}
         </div>
@@ -123,21 +190,39 @@ function OpponentStripMobile({ pKey, guesses, results, eliminated, winnerKey, us
   const elim = eliminated.includes(pKey);
   const won  = winnerKey === pKey;
   const scrollRef = useRef(null);
-  const prevLenRef = useRef(guesses.length);
+  const cardRef = useRef(null);
+  const { newRow, flash } = useNewGuessFlash(guesses.length);
 
   useEffect(() => {
-    if (guesses.length > prevLenRef.current) {
-      const newestGroup = scrollRef.current?.children?.[guesses.length - 1];
+    if (newRow < 0) return;
+    // Bring the whole card into view vertically first (it may be stacked
+    // below other opponents, off the bottom of a short mobile screen), then
+    // scroll the newest guess into view horizontally within its own strip —
+    // previously only the horizontal scroll ran, which is a no-op for a
+    // FIRST guess (it's already the leftmost/only child, nothing to scroll
+    // to) and does nothing at all if the whole strip itself is below the
+    // fold vertically.
+    cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const newestGroup = scrollRef.current?.children?.[newRow];
+    const t = setTimeout(() => {
       newestGroup?.scrollIntoView({ behavior: 'smooth', inline: 'end', block: 'nearest' });
-    }
-    prevLenRef.current = guesses.length;
-  }, [guesses.length]);
+    }, 220);
+    return () => clearTimeout(t);
+  }, [newRow]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>
+    <div
+      ref={cardRef}
+      style={{
+        display: 'flex', flexDirection: 'column', gap: 2, width: '100%',
+        borderRadius: 6, padding: 4,
+        animation: flash ? 'wdlOpponentGlow 1.6s ease-out' : undefined,
+      }}
+    >
       <p style={{
         fontSize: 10, fontWeight: 600,
-        color: won ? '#538d4e' : elim ? '#f87171' : '#9ca3af',
+        color: won ? '#538d4e' : elim ? '#f87171' : flash ? '#22d3ee' : '#9ca3af',
+        transition: 'color 0.3s',
       }}>
         {username} {won ? '🏆' : elim ? '💀' : ''}
       </p>
@@ -146,6 +231,16 @@ function OpponentStripMobile({ pKey, guesses, results, eliminated, winnerKey, us
         style={{
           display: 'flex', gap: 10, width: '100%', overflowX: 'auto',
           scrollSnapType: 'x proximity', paddingBottom: 2, WebkitOverflowScrolling: 'touch',
+          // Explicit touch-action so a horizontal drag is unambiguously
+          // claimed by this strip instead of being arbitrated against the
+          // page's own vertical overflow-y-auto scroller (the reported
+          // "isn't swipable" — nested scroll containers can otherwise have
+          // the outer vertical scroller win a touch gesture that visually
+          // started as a horizontal drag). overscrollBehaviorX stops the
+          // drag from chaining into the outer scroller once this strip hits
+          // its own scroll boundary.
+          touchAction: 'pan-x',
+          overscrollBehaviorX: 'contain',
         }}
       >
         {Array.from({ length: MAX_GUESSES }, (_, row) => (
@@ -155,6 +250,8 @@ function OpponentStripMobile({ pKey, guesses, results, eliminated, winnerKey, us
                 key={col}
                 letter={guesses[row]?.[col] || ''}
                 feedback={results[row]?.[col] || ''}
+                isNew={row === newRow}
+                animDelay={col * 0.08}
               />
             ))}
           </div>

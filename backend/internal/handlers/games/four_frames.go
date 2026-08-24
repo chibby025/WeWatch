@@ -476,6 +476,158 @@ var fourFramesWordBank = []FourFramesRound{
 	{Word: "double rainbow"},
 	{Word: "sun rays", Alternates: []string{"sunrays"}},
 	{Word: "storm clouds"},
+
+	// ── Bank expansion (added 2026-08-24) — same "concrete, unambiguous,
+	// commonly-photographed noun" bar as every entry above, spanning several
+	// fresh categories the original bank barely touched.
+	// Musical instruments
+	{Word: "drum kit"},
+	{Word: "cello"},
+	{Word: "flute"},
+	{Word: "banjo"},
+	{Word: "accordion player"},
+	{Word: "guitar amplifier"},
+
+	// Sports & games
+	{Word: "golf club"},
+	{Word: "baseball bat"},
+	{Word: "soccer ball"},
+	{Word: "skateboard ramp"},
+	{Word: "ski boots"},
+	{Word: "hockey stick"},
+	{Word: "boxing gloves"},
+	{Word: "poker chips"},
+	{Word: "rubik's cube"},
+
+	// Kitchen & cooking
+	{Word: "teapot"},
+	{Word: "frying pan"},
+	{Word: "whisk"},
+	{Word: "rolling pin"},
+	{Word: "cutting board"},
+	{Word: "colander"},
+	{Word: "blender"},
+	{Word: "toaster oven"},
+	{Word: "oven mitt"},
+	{Word: "apron"},
+	{Word: "chef hat"},
+
+	// Tools & garden
+	{Word: "wrench"},
+	{Word: "pliers"},
+	{Word: "saw"},
+	{Word: "drill"},
+	{Word: "garden hose"},
+	{Word: "rake"},
+	{Word: "shovel"},
+	{Word: "lawn mower"},
+	{Word: "watering can"},
+
+	// Outdoor gear & clothing
+	{Word: "compass tool"},
+	{Word: "hiking boots"},
+	{Word: "raincoat"},
+	{Word: "scarf"},
+	{Word: "mittens"},
+	{Word: "top hat"},
+	{Word: "necktie"},
+	{Word: "earrings"},
+	{Word: "bracelet"},
+	{Word: "wedding ring"},
+	{Word: "crown jewelry"},
+	{Word: "backpack hiking"},
+
+	// Bugs & small creatures
+	{Word: "ladybug"},
+	{Word: "dragonfly closeup"},
+	{Word: "grasshopper"},
+	{Word: "firefly"},
+	{Word: "caterpillar"},
+	{Word: "spider web"},
+	{Word: "beehive"},
+	{Word: "ant hill"},
+	{Word: "starfish"},
+	{Word: "seahorse closeup"},
+	{Word: "jellyfish glow"},
+
+	// Birds
+	{Word: "seagull"},
+	{Word: "robin bird"},
+	{Word: "duckling"},
+	{Word: "turkey bird"},
+	{Word: "barn owl"},
+
+	// Plants & nature
+	{Word: "sunflower field"},
+	{Word: "tulip"},
+	{Word: "rose flower"},
+	{Word: "lotus flower"},
+	{Word: "cactus flower"},
+	{Word: "maple leaf"},
+	{Word: "pine cone"},
+	{Word: "acorn"},
+	{Word: "mushroom forest"},
+	{Word: "pumpkin patch"},
+	{Word: "corn field"},
+	{Word: "wheat field"},
+	{Word: "vineyard"},
+	{Word: "orchard"},
+
+	// Food & treats
+	{Word: "birthday cake"},
+	{Word: "ice cream cone"},
+	{Word: "popcorn bucket"},
+	{Word: "cotton candy"},
+	{Word: "gingerbread house"},
+	{Word: "lemonade glass"},
+	{Word: "coffee cup"},
+	{Word: "tea cup"},
+	{Word: "champagne bottle"},
+
+	// School & office
+	{Word: "piggy bank"},
+	{Word: "alarm clock"},
+	{Word: "telescope stargazing"},
+	{Word: "globe map"},
+	{Word: "chalkboard"},
+	{Word: "schoolbus"},
+	{Word: "backpack school"},
+	{Word: "pencil case"},
+	{Word: "paint palette"},
+	{Word: "camera vintage"},
+	{Word: "film reel"},
+
+	// Celebrations & holidays
+	{Word: "theater masks"},
+	{Word: "ballet shoes"},
+	{Word: "disco ball"},
+	{Word: "fireworks display"},
+	{Word: "birthday balloons"},
+	{Word: "christmas tree"},
+	{Word: "santa claus"},
+	{Word: "easter eggs"},
+	{Word: "halloween pumpkin"},
+	{Word: "menorah"},
+	{Word: "diwali lamps"},
+
+	// Toys
+	{Word: "kite flying"},
+	{Word: "paper boat"},
+	{Word: "snow globe"},
+	{Word: "rocking horse"},
+	{Word: "jack in the box"},
+	{Word: "pinwheel"},
+	{Word: "spinning top"},
+	{Word: "marbles"},
+	{Word: "puzzle pieces"},
+
+	// More places
+	{Word: "lighthouse beam"},
+	{Word: "windmill field"},
+	{Word: "covered bridge"},
+	{Word: "stone castle"},
+	{Word: "scarecrow"},
+	{Word: "haystack"},
 }
 
 // fourFramesShuffledRounds returns a shuffled copy of the full word bank —

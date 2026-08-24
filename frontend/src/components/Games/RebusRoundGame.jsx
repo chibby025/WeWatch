@@ -36,8 +36,15 @@ function tokenStyle(tok) {
   if (tok.mirror) transforms.push('scaleX(-1)');
   if (tok.flip) transforms.push('rotate(180deg)');
   if (transforms.length) style.transform = transforms.join(' ');
-  if (tok.sup) { style.position = 'relative'; style.top = '-0.55em'; }
-  if (tok.sub) { style.position = 'relative'; style.top = '0.55em'; }
+  // Genuinely align to the top/bottom of the shared line height (set by the
+  // tallest sibling token on this line) via flexbox align-self, rather than
+  // nudging the text a fraction of its OWN font-size via position:relative —
+  // relative positioning never removes an element from layout flow, so it
+  // left a "ghost" gap in the token's original, un-shifted position. That
+  // reserved empty space is what read as padding around a barely-displaced
+  // word (e.g. "UP" in "upgrade" wasn't noticeably higher than "GRADE").
+  if (tok.sup) style.alignSelf = 'flex-start';
+  if (tok.sub) style.alignSelf = 'flex-end';
   return style;
 }
 

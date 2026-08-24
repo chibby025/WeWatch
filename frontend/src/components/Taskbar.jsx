@@ -892,9 +892,12 @@ const Taskbar = ({
                       return "Whole Room";
                     }
                     
-                    // Show row number for row-based audio
+                    // Show row number for row-based audio — only meaningful where seats
+                    // actually exist (3D Cinema / Lecture Hall). A regular video room has
+                    // no seats at all, so this was always falling through to a bare "?"
+                    // subtitle under the Audio icon the instant the mic was unmuted there.
                     const userSeatId = userSeats?.[authenticatedUserID];
-                    if (!userSeatId) return '?';
+                    if (!userSeatId) return null;
                     
                     // Detect seat format: Cinema uses "row-col", Lecture Hall uses integers
                     const seatIdStr = String(userSeatId);

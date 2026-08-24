@@ -428,6 +428,81 @@ var rebusGeneratedSpecs = []rebusGenSpec{
 	{kind: "sup", words: []string{"SIDE"}, answer: "upside"},
 	{kind: "sup", words: []string{"START"}, answer: "upstart"},
 	{kind: "compound", words: []string{"DRAW", "BACK"}, answer: "drawback"},
+
+	// ── Third content-expansion pass (added 2026-08-24). Same 7 categories,
+	// no new hand-drawn art or photo fetches — still the cheapest lever.
+	// Grow
+	{kind: "grow", words: []string{"POPULATION"}, answer: "growing population"},
+	{kind: "grow", words: []string{"ANXIETY"}, answer: "growing anxiety"},
+	{kind: "grow", words: []string{"BACKLOG"}, answer: "growing backlog"},
+	{kind: "grow", words: []string{"APPETITE"}, answer: "growing appetite"},
+	{kind: "grow", words: []string{"CONTROVERSY"}, answer: "growing controversy"},
+	{kind: "grow", words: []string{"BUZZ"}, answer: "growing buzz"},
+	{kind: "grow", words: []string{"FOLLOWING"}, answer: "growing following"},
+	{kind: "grow", words: []string{"PORTFOLIO"}, answer: "growing portfolio"},
+	{kind: "grow", words: []string{"STORM"}, answer: "growing storm"},
+	{kind: "grow", words: []string{"LIST"}, answer: "growing list"},
+	{kind: "grow", words: []string{"GAP"}, answer: "growing gap"},
+
+	// Shrink
+	{kind: "shrink", words: []string{"WINDOW"}, answer: "shrinking window"},
+	{kind: "shrink", words: []string{"OPTIONS"}, answer: "shrinking options"},
+	{kind: "shrink", words: []string{"MARGIN"}, answer: "shrinking margin"},
+	{kind: "shrink", words: []string{"HERD"}, answer: "shrinking herd"},
+	{kind: "shrink", words: []string{"COASTLINE"}, answer: "shrinking coastline"},
+	{kind: "shrink", words: []string{"INVENTORY"}, answer: "shrinking inventory"},
+	{kind: "shrink", words: []string{"STAFF"}, answer: "shrinking staff"},
+	{kind: "shrink", words: []string{"CIRCLE"}, answer: "shrinking circle"},
+
+	// Whole-word scale
+	{kind: "wholeScale", words: []string{"CHEESE"}, scale: 2.2, answer: "big cheese"},
+	{kind: "wholeScale", words: []string{"BOSS"}, scale: 2.2, answer: "big boss"},
+	{kind: "wholeScale", words: []string{"CATCH"}, scale: 2.2, answer: "big catch"},
+	{kind: "wholeScale", words: []string{"ASK"}, scale: 2.2, answer: "big ask"},
+	{kind: "wholeScale", words: []string{"HITTER"}, scale: 2.2, answer: "big hitter"},
+	{kind: "wholeScale", words: []string{"SCREEN"}, scale: 0.5, answer: "small screen"},
+
+	// Compound
+	{kind: "compound", words: []string{"BACK", "BONE"}, answer: "backbone"},
+	{kind: "compound", words: []string{"BACK", "LOG"}, answer: "backlog"},
+	{kind: "compound", words: []string{"BACK", "YARD"}, answer: "backyard"},
+	{kind: "compound", words: []string{"BACK", "LASH"}, answer: "backlash"},
+	{kind: "compound", words: []string{"BACK", "STAB"}, answer: "backstab"},
+	{kind: "compound", words: []string{"BACK", "TRACK"}, answer: "backtrack"},
+	{kind: "compound", words: []string{"BACK", "UP"}, answer: "backup"},
+	{kind: "compound", words: []string{"OUT", "PUT"}, answer: "output"},
+	{kind: "compound", words: []string{"OUT", "SOURCE"}, answer: "outsource"},
+	{kind: "compound", words: []string{"OUT", "STANDING"}, answer: "outstanding"},
+	{kind: "compound", words: []string{"OUT", "WARD"}, answer: "outward"},
+	{kind: "compound", words: []string{"IN", "DOOR"}, answer: "indoor"},
+	{kind: "compound", words: []string{"IN", "FLOW"}, answer: "inflow"},
+	{kind: "compound", words: []string{"IN", "LAND"}, answer: "inland"},
+	{kind: "compound", words: []string{"IN", "BOUND"}, answer: "inbound"},
+
+	// Repeat-count
+	{kind: "repeat", words: []string{"ANNUAL"}, count: 2, answer: "biannual"},
+	{kind: "repeat", words: []string{"WEEKLY"}, count: 2, answer: "biweekly"},
+	{kind: "repeat", words: []string{"MONTHLY"}, count: 2, answer: "bimonthly"},
+	{kind: "repeat", words: []string{"PARTISAN"}, count: 2, answer: "bipartisan"},
+	{kind: "repeat", words: []string{"POLAR"}, count: 2, answer: "bipolar"},
+	{kind: "repeat", words: []string{"CEPS"}, count: 2, answer: "biceps"},
+	{kind: "repeat", words: []string{"CORN"}, count: 1, answer: "unicorn"},
+	{kind: "repeat", words: []string{"SEX"}, count: 1, answer: "unisex"},
+	{kind: "repeat", words: []string{"SON"}, count: 1, answer: "unison"},
+	{kind: "repeat", words: []string{"PLE"}, count: 3, answer: "triple"},
+
+	// Sub (down-)
+	{kind: "sub", words: []string{"FORCE"}, answer: "downforce"},
+	{kind: "sub", words: []string{"TRODDEN"}, answer: "downtrodden"},
+	{kind: "sub", words: []string{"SWING"}, answer: "downswing"},
+	{kind: "sub", words: []string{"DRAFT"}, answer: "downdraft"},
+	{kind: "sub", words: []string{"RANGE"}, answer: "downrange"},
+
+	// Sup (up-)
+	{kind: "sup", words: []string{"LINK"}, answer: "uplink"},
+	{kind: "sup", words: []string{"SIZE"}, answer: "upsize"},
+	{kind: "sup", words: []string{"TICK"}, answer: "uptick"},
+	{kind: "sup", words: []string{"MARKET"}, answer: "upmarket"},
 }
 
 func rebusGeneratedBank() []RebusPuzzle {
