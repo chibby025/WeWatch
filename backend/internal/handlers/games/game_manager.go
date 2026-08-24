@@ -697,26 +697,34 @@ func (gm *GameManager) CleanupRoomGame(roomID uint) {
 }
 
 // GetPlayerHand returns a copy of the given player's current hand in the room's
-// active game, if that game is a card game and this user is one of its players.
-// Used to build private hand_update messages (websocket_handler.go) — the hand
-// itself must never go through a room-wide broadcast.
-func (gm *GameManager) GetPlayerHand(roomID uint, userID uint) ([]string, bool) {
+// active game (plus that game's session ID), if that game is a card game and
+// this user is one of its players. Used to build private hand_update messages
+// (websocket_handler.go) — the hand itself must never go through a room-wide
+// broadcast. The session ID is returned specifically so the caller can stamp
+// it onto the outgoing message: unlike game_state_update/game_ended (which go
+// through the shared, worker-pooled BroadcastToRoom and got a session-ID guard
+// on the frontend earlier), hand_update is sent via a direct per-user channel
+// write with no equivalent protection — a card game ending, then a different
+// card game starting shortly after with no page refresh in between, can let a
+// hand_update from the OLDER game arrive late and silently overwrite the new
+// game's correct rack with the old game's leftover (sometimes empty) hand.
+func (gm *GameManager) GetPlayerHand(roomID uint, userID uint) ([]string, uint, bool) {
 	gm.mu.RLock()
 	defer gm.mu.RUnlock()
 
 	gameSessionID, exists := gm.roomActiveGames[roomID]
 	if !exists {
-		return nil, false
+		return nil, 0, false
 	}
 	gameState, exists := gm.activeGames[gameSessionID]
 	if !exists || gameState.Hands == nil {
-		return nil, false
+		return nil, 0, false
 	}
 	hand, ok := gameState.Hands[userID]
 	if !ok {
-		return nil, false
+		return nil, 0, false
 	}
-	return append([]string{}, hand...), true
+	return append([]string{}, hand...), gameSessionID, true
 }
 
 // HandlePlayerDisconnect handles player disconnection during a game.

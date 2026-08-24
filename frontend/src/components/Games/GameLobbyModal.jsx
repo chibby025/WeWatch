@@ -547,6 +547,10 @@ export default function GameLobbyModal({
   const [isDesktop, setIsDesktop] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= 768 : false
   );
+  // Feeds the card-sizing height cap below — see the cardW comment.
+  const [viewportHeight, setViewportHeight] = useState(
+    typeof window !== 'undefined' ? window.innerHeight : 800
+  );
   useEffect(() => {
     const mq = window.matchMedia('(orientation: landscape)');
     const handler = (e) => setIsLandscape(e.matches);
@@ -554,7 +558,7 @@ export default function GameLobbyModal({
     return () => mq.removeEventListener('change', handler);
   }, []);
   useEffect(() => {
-    const check = () => setIsDesktop(window.innerWidth >= 768);
+    const check = () => { setIsDesktop(window.innerWidth >= 768); setViewportHeight(window.innerHeight); };
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
@@ -628,11 +632,23 @@ export default function GameLobbyModal({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const cardW = isWideLayout
-    ? Math.max(160, Math.min(280, carouselWidth * 0.32))  // desktop/tablet: big posters
-    : isLandscape
-      ? Math.max(75, Math.min(110, carouselWidth * 0.25))  // mobile landscape: compact
-      : Math.max(130, Math.min(190, carouselWidth * 0.38)); // portrait: original
+  // Card width scales continuously off the carousel's own measured pixel
+  // width, rather than picking between hardcoded per-orientation tiers. The
+  // old isWideLayout/isLandscape branches used a hard 768px width threshold
+  // to decide between a "big desktop cards" formula and a "tiny mobile
+  // landscape" formula — but isLandscape (window wider than tall) is true for
+  // almost any resized desktop window, not just a real phone turned sideways.
+  // A moderately-resized desktop window (landscape-shaped, under 768px wide —
+  // a very common "mid size" test case) fell into the tiny-card tier meant
+  // for a genuinely narrow phone, capping cards at 75-110px even when the
+  // carousel panel had several hundred pixels of real width to spare.
+  const widthBasedCardW = Math.max(130, Math.min(280, carouselWidth * 0.34));
+  // A genuinely short viewport (a real phone in landscape) still needs a
+  // separate cap — card height is derived from width (cardH = cardW * 1.46)
+  // and isn't otherwise height-aware, so a wide-but-short window could
+  // otherwise get cards taller than it has vertical room for.
+  const heightBudget = viewportHeight * 0.42; // leaves room for header/description/footer
+  const cardW = Math.min(widthBasedCardW, heightBudget / 1.46);
 
   const txRef = useRef(null);
   const tyRef = useRef(null);
@@ -942,8 +958,12 @@ export default function GameLobbyModal({
                 ? 'w-[70%] order-2 overflow-y-auto border-l border-gray-700 px-4 py-2'
                 : 'px-4 sm:px-6 pt-3 pb-4 sm:pt-4 sm:pb-6 border-b border-gray-700'
           }>
-            {/* Search — hidden in landscape/wide, and in readOnly (no independent browsing there) */}
-            {!readOnly && !(isLandscape || isWideLayout) && (
+            {/* Search — hidden only in readOnly (no independent browsing there). Used
+                to also hide in any landscape-shaped layout (which is almost any
+                resized desktop window, not just a real phone turned sideways) even
+                though there was plenty of room for it — see the cardW comment above
+                for the same underlying isLandscape-as-a-size-proxy issue. */}
+            {!readOnly && (
               <div className="relative mb-3">
                 <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input

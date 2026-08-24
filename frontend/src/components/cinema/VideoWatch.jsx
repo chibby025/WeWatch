@@ -1099,6 +1099,21 @@ export default function VideoWatch() {
   // message (never broadcast in game_state — every other player's hand and the
   // draw pile order must stay server-side-only). Reset whenever activeGame clears.
   const [myHand, setMyHand] = useState(null);
+  // Tracks the highest game_session_id ever seen (game_started + hand_update),
+  // monotonically — game_session_id is a DB auto-increment ID, so a genuinely
+  // newer game's ID is always >= any older one's. Guards hand_update below
+  // against a stale message from an ALREADY-ENDED card game (Whot, Crazy
+  // Eights, UNO, Blackjack, Wordsmith, ...) silently overwriting a newer
+  // game's correct rack — playing several card games back-to-back with no
+  // page refresh in between is exactly when this can happen. Deliberately
+  // NOT compared against activeGame.game_session_id directly: hand_update is
+  // sent via a direct per-user channel write while game_started goes through
+  // the room-wide broadcast worker pool, so the two can arrive in either
+  // order for the SAME new game — comparing against a monotonic ref (updated
+  // by whichever of the two arrives first) avoids incorrectly rejecting a
+  // legitimate hand_update that happens to arrive before activeGame itself
+  // has been updated. Never reset — it should only ever move forward.
+  const latestGameSessionIdRef = useRef(null);
   // Raw server-rejected-move error text + a bump key (so a textually-identical
   // rejection is still recognized as a fresh occurrence). Currently only
   // consumed by WordsmithGame's invalid-move banner — every other game keeps
@@ -6190,6 +6205,12 @@ export default function VideoWatch() {
           const _gAction = message.action;
           if (_gAction === 'game_started') {
             console.log('🎮 [VideoWatch] Game started:', message.data);
+            // A genuinely new game always has a higher game_session_id than
+            // anything seen before (DB auto-increment) — see
+            // latestGameSessionIdRef's own comment above.
+            if (message.data.game_session_id != null) {
+              latestGameSessionIdRef.current = message.data.game_session_id;
+            }
             const enrichedPlayers = (message.data.players || []).map(p => {
               const member = roomMembers.find(m => m.id === p.user_id);
               const avatarUrl = p.avatar || p.avatar_url
@@ -6346,9 +6367,24 @@ export default function VideoWatch() {
             // Private, per-player message (hub.BroadcastToUser, not a room broadcast) —
             // only this client's own hand ever arrives here, on game start, after this
             // player's own move, and on late-join rehydration.
-            // 🐛 [DEBUG] temporary — pin down a report of the host's own rack arriving empty.
-            console.log('🐛 [DEBUG] hand_update received:', { rawData: message.data, hand: message.data?.hand, currentUserId: currentUser?.id });
-            setMyHand(message.data?.hand || []);
+            //
+            // Guard against a stale hand_update from an OLDER, already-ended card game
+            // silently overwriting a NEWER game's correct rack — see
+            // latestGameSessionIdRef's own comment above for the full reasoning
+            // (confirmed real: playing Whot/Crazy Eights/UNO/Blackjack, then Wordsmith,
+            // with no page refresh in between, reported an empty rack from the start).
+            const incomingSessionId = message.data?.game_session_id;
+            const isStaleHand = incomingSessionId != null
+              && latestGameSessionIdRef.current != null
+              && incomingSessionId < latestGameSessionIdRef.current;
+            console.log('🐛 [DEBUG] hand_update received:', {
+              rawData: message.data, hand: message.data?.hand, currentUserId: currentUser?.id,
+              incomingSessionId, latestKnown: latestGameSessionIdRef.current, isStaleHand,
+            });
+            if (!isStaleHand) {
+              if (incomingSessionId != null) latestGameSessionIdRef.current = incomingSessionId;
+              setMyHand(message.data?.hand || []);
+            }
           }
           // ── close_game: host dismissed a completed game — close for everyone ─
           if (_gAction === 'game_closed') {

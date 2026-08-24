@@ -216,7 +216,7 @@ func (h *GameWebSocketHandler) GetActiveGameMessage(roomID uint) map[string]inte
 // GetActiveGameMessage) — without this, a player who reconnects mid-game would see
 // the public board state but never their own hand.
 func (h *GameWebSocketHandler) GetPlayerHandMessage(roomID uint, userID uint) map[string]interface{} {
-	hand, ok := h.gameManager.GetPlayerHand(roomID, userID)
+	hand, gameSessionID, ok := h.gameManager.GetPlayerHand(roomID, userID)
 	if !ok {
 		return nil
 	}
@@ -224,7 +224,8 @@ func (h *GameWebSocketHandler) GetPlayerHandMessage(roomID uint, userID uint) ma
 		"type":   "game",
 		"action": "hand_update",
 		"data": map[string]interface{}{
-			"hand": hand,
+			"hand":            hand,
+			"game_session_id": gameSessionID,
 		},
 	}
 }
