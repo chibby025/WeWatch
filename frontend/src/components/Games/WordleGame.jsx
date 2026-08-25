@@ -196,16 +196,20 @@ function OpponentStripMobile({ pKey, guesses, results, eliminated, winnerKey, us
   useEffect(() => {
     if (newRow < 0) return;
     // Bring the whole card into view vertically first (it may be stacked
-    // below other opponents, off the bottom of a short mobile screen), then
-    // scroll the newest guess into view horizontally within its own strip —
-    // previously only the horizontal scroll ran, which is a no-op for a
-    // FIRST guess (it's already the leftmost/only child, nothing to scroll
-    // to) and does nothing at all if the whole strip itself is below the
-    // fold vertically.
+    // below other opponents, off the bottom of a short mobile screen).
     cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    const newestGroup = scrollRef.current?.children?.[newRow];
     const t = setTimeout(() => {
-      newestGroup?.scrollIntoView({ behavior: 'smooth', inline: 'end', block: 'nearest' });
+      if (newRow === 0) {
+        // The very first guess should just sit at its natural, fully-visible
+        // position (scrollLeft 0) — nothing to scroll INTO view yet, since
+        // it's the leftmost content. Explicit here rather than relying on
+        // scrollIntoView's default alignment, so "1st box fully visible" is
+        // guaranteed rather than merely likely.
+        scrollRef.current?.scrollTo({ left: 0, behavior: 'smooth' });
+      } else {
+        const newestGroup = scrollRef.current?.children?.[newRow];
+        newestGroup?.scrollIntoView({ behavior: 'smooth', inline: 'end', block: 'nearest' });
+      }
     }, 220);
     return () => clearTimeout(t);
   }, [newRow]);
@@ -214,7 +218,7 @@ function OpponentStripMobile({ pKey, guesses, results, eliminated, winnerKey, us
     <div
       ref={cardRef}
       style={{
-        display: 'flex', flexDirection: 'column', gap: 2, width: '100%',
+        display: 'flex', flexDirection: 'column', gap: 2, width: '100%', minWidth: 0,
         borderRadius: 6, padding: 4,
         animation: flash ? 'wdlOpponentGlow 1.6s ease-out' : undefined,
       }}
@@ -229,16 +233,32 @@ function OpponentStripMobile({ pKey, guesses, results, eliminated, winnerKey, us
       <div
         ref={scrollRef}
         style={{
-          display: 'flex', gap: 10, width: '100%', overflowX: 'auto',
+          display: 'flex', gap: 10, width: '100%', minWidth: 0, overflowX: 'auto',
           scrollSnapType: 'x proximity', paddingBottom: 2, WebkitOverflowScrolling: 'touch',
           // Explicit touch-action so a horizontal drag is unambiguously
           // claimed by this strip instead of being arbitrated against the
-          // page's own vertical overflow-y-auto scroller (the reported
-          // "isn't swipable" — nested scroll containers can otherwise have
-          // the outer vertical scroller win a touch gesture that visually
-          // started as a horizontal drag). overscrollBehaviorX stops the
-          // drag from chaining into the outer scroller once this strip hits
-          // its own scroll boundary.
+          // page's own vertical overflow-y-auto scroller. overscrollBehaviorX
+          // stops the drag from chaining into the outer scroller once this
+          // strip hits its own scroll boundary.
+          //
+          // minWidth: 0 on this div AND its parent (and the "others" wrapper
+          // one level further up, in the main render) is the actual fix for
+          // both "swipe doesn't work" and "1st box hidden": a flex item's
+          // default min-width is `auto`, meaning it refuses to shrink below
+          // its content's natural width. Without minWidth:0 at every level,
+          // this div's true rendered width was being pushed out to match its
+          // own unwrapped content (~878px for 6 guess rows) instead of
+          // clamping to the actual viewport — which the ancestor row's
+          // alignItems:'center' (the cross-axis on mobile's
+          // flexDirection:'column') then centered, pushing roughly half of
+          // that width off BOTH edges of the real viewport. The overflow
+          // never landed inside THIS div's own overflowX:'auto' — from this
+          // div's own perspective it was already exactly as wide as its
+          // content, so there was nothing to scroll, and no swipe gesture
+          // had anything to act on. With minWidth:0 restored, this div
+          // actually clamps to its real available width, the excess content
+          // becomes genuine internal overflow, and both the swipe and the
+          // "1st box fully visible at rest" behavior work as intended.
           touchAction: 'pan-x',
           overscrollBehaviorX: 'contain',
         }}
@@ -561,8 +581,17 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
           </div>
         )}
 
-        {/* Grids row — vertical on mobile, horizontal on desktop */}
-        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 10 : 24, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+        {/* Grids row — vertical on mobile, horizontal on desktop.
+            width/minWidth: 0 here too (same reasoning as the "others"
+            wrapper and OpponentStripMobile's own strip below) — this row is
+            itself a flex item of the top-level overlay, which also uses
+            alignItems:'center' on its cross axis. Without an explicit width
+            bound + minWidth:0 here, this row's own shrink-to-fit sizing
+            could defer to its widest descendant's natural content width
+            (the opponent strip's ~878px) rather than the real viewport,
+            reintroducing the exact same off-screen/unswipeable bug one
+            level higher up the tree. */}
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 10 : 24, alignItems: 'center', justifyContent: 'center', marginBottom: 8, width: '100%', minWidth: 0 }}>
 
           {/* My grid — tappable on mobile to (re)open the native keyboard,
               e.g. if it was dismissed or auto-focus was blocked by the
@@ -627,7 +656,23 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
           {others.length > 0 && (
             <div
               className={isMobile ? 'flex flex-col gap-4' : 'flex flex-col gap-5'}
-              style={isMobile ? { width: '100%', alignSelf: 'stretch' } : undefined}
+              // minWidth: 0 is the actual fix for "1st guess box hidden /
+              // can't swipe" — a flex item's default min-width is `auto`,
+              // meaning it refuses to shrink below its CONTENT's natural
+              // width. Without this, this wrapper's true width was being
+              // forced up to the strip's full unscrolled content width
+              // (~878px, 6 guess rows), which the parent row's
+              // alignItems:'center' (the cross-axis on mobile's
+              // flexDirection:'column') then centered — pushing roughly half
+              // of that width off BOTH edges of the actual viewport, with
+              // nothing declaring itself the horizontal-scroll owner at that
+              // point, so guess #1 (leftmost) ended up off-screen with no
+              // swipe able to reach it. minWidth: 0 lets this wrapper
+              // actually shrink to 100% of its real parent width, so the
+              // overflow is forced down into OpponentStripMobile's own
+              // overflowX:'auto' div instead, where it becomes real,
+              // touch-scrollable content.
+              style={isMobile ? { width: '100%', minWidth: 0, alignSelf: 'stretch' } : undefined}
             >
               {others.map(p => {
                 const pKey = String(p.user_id);
