@@ -2518,7 +2518,7 @@ const LobbyPage = () => {
     setShowCircleSphere(false);
     try {
       const data = await startCircleWatchout(memberIds, 'video', 'G');
-      navigate(`/rooms/${data.room_id}`, { state: { openSession: true } });
+      navigate(`/rooms/${data.room_id}`, { state: { openSession: true, scrollToLatest: true } });
     } catch (err) {
       const msg = err.response?.data?.error || 'Failed to start Circle WatchOut';
       toast.error(msg);
@@ -2850,7 +2850,7 @@ const LobbyPage = () => {
     const roomTypes = ['room_post', 'session_started', 'session_ended', 'event_booking', 'event_booking_confirm', 'gift_ticket', 'watch_invite'];
     const postTypes = ['post_like', 'post_comment', 'reply'];
     if (roomTypes.includes(nType)) {
-      navigate(`/rooms/${n.entity_id}`);
+      navigate(`/rooms/${n.entity_id}`, { state: { scrollToLatest: true } });
     } else if (postTypes.includes(nType)) {
       // entity_id is a post ID for all three types (post_like, post_comment,
       // and reply — the latter fixed backend-side to point at the post
@@ -4422,7 +4422,7 @@ const LobbyPage = () => {
           onGoToRoom={(roomId) => {
             setIsCreateNewModalOpen(false);
             setCreateModalHidePosts(false);
-            navigate(`/rooms/${roomId}`, { state: { openSession: true } });
+            navigate(`/rooms/${roomId}`, { state: { openSession: true, scrollToLatest: true } });
           }}
           onCreatePost={() => setIsPostUploadModalOpen(true)}
           userMainRoomId={currentUser?.main_room_id}
@@ -4666,7 +4666,7 @@ const LobbyPage = () => {
                     onMouseEnter={() => prefetchRoom(room.id)}
                     onClick={() => {
                       if (roomLongPressActive.current) { roomLongPressActive.current = false; return; }
-                      navigate(`/rooms/${room.id}`, { state: { roomData: room } });
+                      navigate(`/rooms/${room.id}`, { state: { roomData: room, scrollToLatest: true } });
                     }}
                     onTouchStart={(e) => {
                       prefetchRoom(room.id);
@@ -4827,7 +4827,7 @@ const LobbyPage = () => {
                     >
                       <button
                         className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2.5 transition-colors"
-                        onClick={() => { setOpenMenuRoomId(null); setOpenMenuPosition(null); navigate(`/rooms/${room.id}`, { state: { roomData: room } }); }}
+                        onClick={() => { setOpenMenuRoomId(null); setOpenMenuPosition(null); navigate(`/rooms/${room.id}`, { state: { roomData: room, scrollToLatest: true } }); }}
                       >
                         <ArrowUpIcon className="w-4 h-4 rotate-90" /> Enter Room
                       </button>
@@ -5303,7 +5303,7 @@ const LobbyPage = () => {
                   <div className="absolute bottom-20 left-4 right-16 pointer-events-auto" style={{ fontFamily: '"Outfit", -apple-system, "Segoe UI", sans-serif' }}>
                     <div className="flex items-center gap-2 mb-2">
                       <div
-                        onClick={(e) => { e.stopPropagation(); if (!session.is_temporary) navigate(`/rooms/${session.room_id}`); }}
+                        onClick={(e) => { e.stopPropagation(); if (!session.is_temporary) navigate(`/rooms/${session.room_id}`, { state: { scrollToLatest: true } }); }}
                         className="relative flex-shrink-0 cursor-pointer"
                       >
                         <div className="absolute -inset-1 rounded-full bg-red-500/30 animate-ping" />
@@ -5611,10 +5611,10 @@ const LobbyPage = () => {
                       {/* Row 1: Room Avatar + Name & Star + Content Rating */}
                       <div className="flex items-center gap-3 mb-3">
                         {/* Room Avatar with Live Ring */}
-                        <div 
+                        <div
                           onClick={!session.is_temporary ? (e) => {
                             e.stopPropagation();
-                            navigate(`/rooms/${session.room_id}`);
+                            navigate(`/rooms/${session.room_id}`, { state: { scrollToLatest: true } });
                           } : undefined}
                           className={`relative flex-shrink-0 ${
                             !session.is_temporary ? 'cursor-pointer group' : ''
@@ -7367,10 +7367,10 @@ const LobbyPage = () => {
                   {/* Row 1: Room Avatar + Name & Star + Content Rating */}
                   <div className="flex items-center gap-3 mb-3">
                     {/* Room Avatar with Live Ring */}
-                    <div 
+                    <div
                       onClick={!session.is_temporary ? (e) => {
                         e.stopPropagation();
-                        navigate(`/rooms/${session.room_id}`);
+                        navigate(`/rooms/${session.room_id}`, { state: { scrollToLatest: true } });
                       } : undefined}
                       className={`relative flex-shrink-0 ${
                         !session.is_temporary ? 'cursor-pointer group' : ''
@@ -7735,7 +7735,7 @@ const LobbyPage = () => {
                     </div>
                     {ev.Room?.ID && (
                       <button
-                        onClick={() => { setShowCalendarDrawer(false); navigate(`/rooms/${ev.Room.ID}`); }}
+                        onClick={() => { setShowCalendarDrawer(false); navigate(`/rooms/${ev.Room.ID}`, { state: { scrollToLatest: true } }); }}
                         className="flex-shrink-0 text-xs px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold transition-colors"
                       >
                         Join

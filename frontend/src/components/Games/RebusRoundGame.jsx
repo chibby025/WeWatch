@@ -163,6 +163,26 @@ function RebusImageToken({ tok }) {
   );
 }
 
+// A sup/sub token's "raised"/"lowered" treatment (tokenStyle's align-self,
+// imageTokenStyle's translateY) only has room to act within its own line —
+// every sup/sub puzzle in the bank is a lone single-token pattern (confirmed:
+// rtGenSup/rtGenSub and every hand-authored rtSup/rtSub/PhotoSup/PhotoSub
+// call site produces exactly one token, nothing else sharing that line), so
+// that line's own height always exactly equals the token's height — there's
+// no spare cross-axis space for align-self to redistribute. The actual
+// vertical centering came from one level up (the puzzle card's own
+// `items-center` stretching this whole block to its 260-280px min-height and
+// centering it) — this decides where THIS component's content sits within
+// that full height once the card stops centering it for us (see the
+// `items-stretch` card wrapper below).
+function patternVerticalJustify(pattern) {
+  const hasSup = pattern.some((t) => t.sup);
+  const hasSub = pattern.some((t) => t.sub);
+  if (hasSup && !hasSub) return 'flex-start';
+  if (hasSub && !hasSup) return 'flex-end';
+  return 'center';
+}
+
 function RebusPatternDisplay({ pattern }) {
   if (!pattern || pattern.length === 0) {
     return <div className="text-gray-600 text-sm">Loading puzzle…</div>;
@@ -173,7 +193,10 @@ function RebusPatternDisplay({ pattern }) {
     lines[lines.length - 1].push(tok);
   });
   return (
-    <div className="flex flex-col items-center gap-4 py-2">
+    <div
+      className="flex flex-col items-center gap-4 py-2 w-full"
+      style={{ justifyContent: patternVerticalJustify(pattern) }}
+    >
       {lines.map((line, li) => (
         <div key={li} className="flex items-center justify-center gap-3 flex-wrap px-2">
           {line.map((tok, ti) => (
@@ -514,8 +537,20 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
                 now-bigger .rebus-img photos (see the style block above) —
                 a short plain-text puzzle still benefits from the taller
                 minimum too, paired with the bigger base text size in
-                tokenStyle above. */}
-            <div className="bg-gray-800 rounded-2xl p-3 sm:p-8 mb-4 shadow-lg min-h-[260px] sm:min-h-[280px] flex items-center justify-center">
+                tokenStyle above.
+                items-stretch (not items-center): a sup/sub puzzle (e.g.
+                "UPLINK" -> a lone raised "LINK" token) needs to be pinned at
+                the actual top/bottom of this card, not just at the top/bottom
+                of its own single-line height — items-center used to
+                vertically center the WHOLE pattern block within this box
+                regardless of what any individual token did internally,
+                which is what read as "always centered, ignoring up/down."
+                items-stretch instead lets RebusPatternDisplay's own root
+                fill this card's full height, so its own justify-content
+                (see patternVerticalJustify) can genuinely place content at
+                the top/bottom rather than fighting a parent that already
+                centered everything one level up. */}
+            <div className="bg-gray-800 rounded-2xl p-3 sm:p-8 mb-4 shadow-lg min-h-[260px] sm:min-h-[280px] flex items-stretch justify-center">
               <RebusPatternDisplay pattern={pattern} />
             </div>
 

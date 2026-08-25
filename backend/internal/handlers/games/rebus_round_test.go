@@ -911,22 +911,65 @@ func TestRebusGenericHintMultiWord(t *testing.T) {
 // from the second wrong guess, and a first-letter reveal added from the
 // third wrong guess onward.
 func TestRebusHintForAttemptEscalation(t *testing.T) {
-	if got := rebusHintForAttempt("eggshell", "", 1); got != "" {
+	if got := rebusHintForAttempt("eggshell", "", 1, ""); got != "" {
 		t.Fatalf("expected no hint on the first wrong attempt, got %q", got)
 	}
-	if got := rebusHintForAttempt("eggshell", "", 2); got != " Hint: it's 8 letters" {
+	if got := rebusHintForAttempt("eggshell", "", 2, ""); got != " Hint: it's 8 letters" {
 		t.Fatalf("expected the generic hint on the second attempt, got %q", got)
 	}
-	if got := rebusHintForAttempt("eggshell", "", 3); got != " Hint: it's 8 letters, starts with 'E'" {
+	if got := rebusHintForAttempt("eggshell", "", 3, ""); got != " Hint: it's 8 letters, starts with 'E'" {
 		t.Fatalf("expected the generic hint plus first letter on the third attempt, got %q", got)
 	}
 	// An authored hint takes priority over the generic fallback, but the
 	// first-letter reveal still layers on top of it at attempt 3.
-	if got := rebusHintForAttempt("growing old", "Watch the letters get bigger…", 2); got != " Hint: Watch the letters get bigger…" {
+	if got := rebusHintForAttempt("growing old", "Watch the letters get bigger…", 2, ""); got != " Hint: Watch the letters get bigger…" {
 		t.Fatalf("expected the authored hint verbatim, got %q", got)
 	}
-	if got := rebusHintForAttempt("growing old", "Watch the letters get bigger…", 3); got != " Hint: Watch the letters get bigger…, starts with 'G'" {
+	if got := rebusHintForAttempt("growing old", "Watch the letters get bigger…", 3, ""); got != " Hint: Watch the letters get bigger…, starts with 'G'" {
 		t.Fatalf("expected the authored hint plus first letter, got %q", got)
+	}
+}
+
+// TestRebusPositionalHint confirms a guess matching exactly one word of a
+// multi-word answer takes priority over both the authored and generic hint,
+// but only once the normal attempt threshold is reached — and confirms the
+// three genuinely distinct cases (matched word is first/last/middle) each
+// produce the right before/after phrasing.
+func TestRebusPositionalHint(t *testing.T) {
+	// Below the hint threshold: no hint at all, positional or otherwise,
+	// even though the guess would match.
+	if got := rebusHintForAttempt("ice cream", "", 1, "cream"); got != "" {
+		t.Fatalf("expected no hint below the attempt threshold, got %q", got)
+	}
+	// Matching the LAST word -> "before" only.
+	if got := rebusHintForAttempt("ice cream", "", 2, "cream"); got != " Hint: you found 'cream' — there's a word before it" {
+		t.Fatalf("expected a 'before' positional hint, got %q", got)
+	}
+	// Matching the FIRST word -> "after" only.
+	if got := rebusHintForAttempt("ice cream", "", 2, "ice"); got != " Hint: you found 'ice' — there's a word after it" {
+		t.Fatalf("expected an 'after' positional hint, got %q", got)
+	}
+	// Matching a MIDDLE word of a 3-word answer -> both directions.
+	if got := rebusHintForAttempt("mind over matter", "", 2, "over"); got != " Hint: you found 'over' — there's a word before it and a word after it" {
+		t.Fatalf("expected a 'before and after' positional hint, got %q", got)
+	}
+	// Takes priority over an authored hint, not just the generic fallback.
+	if got := rebusHintForAttempt("ice cream", "A frozen treat.", 2, "cream"); got != " Hint: you found 'cream' — there's a word before it" {
+		t.Fatalf("expected the positional hint to take priority over the authored hint, got %q", got)
+	}
+	// A guess matching neither word falls back to the generic hint, unchanged.
+	if got := rebusHintForAttempt("ice cream", "", 2, "sundae"); got != " Hint: it's 2 words (3+5 letters)" {
+		t.Fatalf("expected the generic fallback for a non-matching guess, got %q", got)
+	}
+	// A single-word answer has no position to reveal, regardless of guess.
+	if got := rebusHintForAttempt("unicorn", "", 2, "unicorn"); got != " Hint: it's 7 letters" {
+		t.Fatalf("expected the generic fallback for a single-word answer, got %q", got)
+	}
+	// The first-letter reveal still layers on top of a positional hint at
+	// the higher attempt threshold, same as it does for the other two hint
+	// sources.
+	if got := rebusHintForAttempt("ice cream", "", 3, "cream"); got != " Hint: you found 'cream' — there's a word before it, starts with 'I'" {
+		t.Fatalf("expected the positional hint plus first letter, got %q", got)
 	}
 }
 
@@ -982,7 +1025,7 @@ func TestRebusWithPexelsRetrySucceedsAfterTransientFailures(t *testing.T) {
 	defer func() { rebusPexelsRetryDelay = original }()
 
 	calls := 0
-	result, err := rebusWithPexelsRetry(func() (string, error) {
+	result, err := rebusWithPexelsRetry(rebusPexelsMaxAttempts, rebusPexelsRetryDelay, func() (string, error) {
 		calls++
 		if calls < rebusPexelsMaxAttempts {
 			return "", fmt.Errorf("simulated transient failure")
@@ -1009,7 +1052,7 @@ func TestRebusWithPexelsRetryReturnsLastErrorAfterExhaustion(t *testing.T) {
 	defer func() { rebusPexelsRetryDelay = original }()
 
 	calls := 0
-	_, err := rebusWithPexelsRetry(func() (string, error) {
+	_, err := rebusWithPexelsRetry(rebusPexelsMaxAttempts, rebusPexelsRetryDelay, func() (string, error) {
 		calls++
 		return "", fmt.Errorf("persistent failure #%d", calls)
 	})

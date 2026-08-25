@@ -3,7 +3,9 @@ package games
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 	"wewatch-backend/internal/models"
 )
 
@@ -35,6 +37,25 @@ func makeTestFourFramesState(numPlayers int) *GameSessionState {
 // fourFramesPhotoFetcher for the duration of one test — restore() must be
 // deferred by the caller to avoid leaking the fake into later tests.
 func fakeFourFramesFetcher(t *testing.T) (restore func()) {
+	t.Helper()
+	original := fourFramesPhotoFetcher
+	fourFramesPhotoFetcher = func(word string) ([]string, error) {
+		return []string{
+			"https://images.pexels.com/fake/1.jpg",
+			"https://images.pexels.com/fake/2.jpg",
+			"https://images.pexels.com/fake/3.jpg",
+			"https://images.pexels.com/fake/4.jpg",
+			"https://images.pexels.com/fake/5-alt.jpg",
+		}, nil
+	}
+	return func() { fourFramesPhotoFetcher = original }
+}
+
+// fakeFourFramesFetcherFourOnly mirrors fakeFourFramesFetcher but returns
+// only the 4 required for core gameplay, with no 5th "alt view" photo —
+// exercises the "round plays completely normally with no bonus hint
+// available" path fetchFourFramesPhotos' own comment documents.
+func fakeFourFramesFetcherFourOnly(t *testing.T) (restore func()) {
 	t.Helper()
 	original := fourFramesPhotoFetcher
 	fourFramesPhotoFetcher = func(word string) ([]string, error) {
@@ -472,5 +493,178 @@ func TestFourFramesAnswerWrongIncludesHintFromSecondAttempt(t *testing.T) {
 	wantHint := "Hint: " + rebusGenericHint(word)
 	if err2 == nil || !strings.Contains(err2.Error(), wantHint) {
 		t.Fatalf("expected the second wrong guess to include %q, got %v", wantHint, err2)
+	}
+}
+
+// TestFourFramesAltPhotoRevealedAtThreshold confirms the 5th "alt view"
+// photo stays hidden through the first fourFramesAltPhotoAfterAttempts-1
+// wrong guesses, then appears in GameData["alt_photo_url"] exactly once the
+// threshold is reached — using the real 5th URL fakeFourFramesFetcher
+// supplies.
+func TestFourFramesAltPhotoRevealedAtThreshold(t *testing.T) {
+	gm := &GameManager{}
+	gs := makeTestFourFramesState(2)
+	defer fakeFourFramesFetcher(t)()
+	if _, _, err := gm.processFourFramesMove(gs, fourFramesTestHostID, "four_frames_start", nil); err != nil {
+		t.Fatalf("unexpected start error: %v", err)
+	}
+
+	for attempt := 1; attempt < fourFramesAltPhotoAfterAttempts; attempt++ {
+		if _, _, err := gm.processFourFramesMove(gs, 1, "answer", map[string]interface{}{"guess": "definitely wrong"}); err == nil {
+			t.Fatalf("attempt %d: expected the wrong guess to be rejected", attempt)
+		}
+		if alt, _ := gs.GameData["alt_photo_url"].(string); alt != "" {
+			t.Fatalf("attempt %d: expected alt_photo_url to still be hidden below the threshold, got %q", attempt, alt)
+		}
+	}
+
+	if _, _, err := gm.processFourFramesMove(gs, 1, "answer", map[string]interface{}{"guess": "definitely wrong"}); err == nil {
+		t.Fatal("expected the threshold-crossing wrong guess to still be rejected")
+	}
+	wantAlt := "https://images.pexels.com/fake/5-alt.jpg"
+	if alt, _ := gs.GameData["alt_photo_url"].(string); alt != wantAlt {
+		t.Fatalf("expected alt_photo_url=%q once the threshold is reached, got %q", wantAlt, alt)
+	}
+}
+
+// TestFourFramesAltPhotoNotAvailableWhenOnlyFourPhotosFetched confirms a
+// round with only 4 usable Pexels candidates (no 5th) plays completely
+// normally — the threshold-crossing guess is still rejected as normal, it
+// just never sets alt_photo_url, and nothing panics on the nil map lookup.
+func TestFourFramesAltPhotoNotAvailableWhenOnlyFourPhotosFetched(t *testing.T) {
+	gm := &GameManager{}
+	gs := makeTestFourFramesState(2)
+	defer fakeFourFramesFetcherFourOnly(t)()
+	if _, _, err := gm.processFourFramesMove(gs, fourFramesTestHostID, "four_frames_start", nil); err != nil {
+		t.Fatalf("unexpected start error: %v", err)
+	}
+
+	for attempt := 1; attempt <= fourFramesAltPhotoAfterAttempts; attempt++ {
+		if _, _, err := gm.processFourFramesMove(gs, 1, "answer", map[string]interface{}{"guess": "definitely wrong"}); err == nil {
+			t.Fatalf("attempt %d: expected the wrong guess to be rejected", attempt)
+		}
+	}
+	if alt, _ := gs.GameData["alt_photo_url"].(string); alt != "" {
+		t.Fatalf("expected alt_photo_url to stay empty when no 5th photo was ever fetched, got %q", alt)
+	}
+}
+
+// TestFourFramesAltPhotoResetsEachRound confirms a fresh round's
+// four_frames_start clears any alt_photo_url left over from the previous
+// round — otherwise a player joining round 2 could see round 1's leftover
+// clue sitting there before anyone's even guessed wrong yet.
+func TestFourFramesAltPhotoResetsEachRound(t *testing.T) {
+	gm := &GameManager{}
+	gs := makeTestFourFramesState(2)
+	defer fakeFourFramesFetcher(t)()
+	gm.processFourFramesMove(gs, fourFramesTestHostID, "four_frames_start", nil)
+	for attempt := 1; attempt <= fourFramesAltPhotoAfterAttempts; attempt++ {
+		gm.processFourFramesMove(gs, 1, "answer", map[string]interface{}{"guess": "definitely wrong"})
+	}
+	if alt, _ := gs.GameData["alt_photo_url"].(string); alt == "" {
+		t.Fatal("test setup failed: expected round 1 to have revealed its alt photo")
+	}
+	gm.processFourFramesMove(gs, fourFramesTestHostID, "reveal", nil)
+	if _, _, err := gm.processFourFramesMove(gs, fourFramesTestHostID, "four_frames_start", nil); err != nil {
+		t.Fatalf("unexpected error starting round 2: %v", err)
+	}
+	if alt, _ := gs.GameData["alt_photo_url"].(string); alt != "" {
+		t.Fatalf("expected round 2 to start with alt_photo_url cleared, got %q", alt)
+	}
+}
+
+// TestFourFramesPrefetchConsumedForNextRound confirms the background
+// prefetch spawned by round 1's four_frames_start is actually consumed by
+// round 2's four_frames_start, rather than round 2 doing its own redundant
+// live fetch on top of it. The fetcher being called ONCE for round 2's word
+// is expected — that's the prefetch itself, from the background goroutine.
+// The bug this catches is a SECOND call for that same word once round 2
+// actually starts, which would mean the cache was never consulted (or
+// missed) and a live fallback fetch ran anyway.
+func TestFourFramesPrefetchConsumedForNextRound(t *testing.T) {
+	gm := &GameManager{}
+	gs := makeTestFourFramesState(2)
+	round2Word := gs.FourFramesRounds[1].Word
+
+	var mu sync.Mutex
+	round2Calls := 0
+
+	original := fourFramesPhotoFetcher
+	defer func() { fourFramesPhotoFetcher = original }()
+	fourFramesPhotoFetcher = func(word string) ([]string, error) {
+		if word == round2Word {
+			mu.Lock()
+			round2Calls++
+			mu.Unlock()
+		}
+		return []string{
+			"https://images.pexels.com/fake/1.jpg",
+			"https://images.pexels.com/fake/2.jpg",
+			"https://images.pexels.com/fake/3.jpg",
+			"https://images.pexels.com/fake/4.jpg",
+			"https://images.pexels.com/fake/5-alt.jpg",
+		}, nil
+	}
+
+	if _, _, err := gm.processFourFramesMove(gs, fourFramesTestHostID, "four_frames_start", nil); err != nil {
+		t.Fatalf("unexpected error starting round 1: %v", err)
+	}
+
+	// The background prefetch for round 2 was just spawned via `go` — poll
+	// for it to land instead of a fixed sleep, bounded so a genuine failure
+	// to prefetch fails the test promptly rather than hanging.
+	key := fourFramesPrefetchKey(gs.GameSession.ID, 1)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok := gm.fourFramesPrefetch.Load(key); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the round 2 prefetch to complete")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	mu.Lock()
+	callsBeforeRound2Starts := round2Calls
+	mu.Unlock()
+	if callsBeforeRound2Starts != 1 {
+		t.Fatalf("expected exactly 1 fetch for round 2's word (the prefetch itself) before round 2 starts, got %d", callsBeforeRound2Starts)
+	}
+
+	if _, _, err := gm.processFourFramesMove(gs, fourFramesTestHostID, "reveal", nil); err != nil {
+		t.Fatalf("unexpected error revealing round 1: %v", err)
+	}
+	if _, _, err := gm.processFourFramesMove(gs, fourFramesTestHostID, "four_frames_start", nil); err != nil {
+		t.Fatalf("unexpected error starting round 2: %v", err)
+	}
+	if _, stillCached := gm.fourFramesPrefetch.Load(key); stillCached {
+		t.Fatal("expected the prefetch entry to be consumed (LoadAndDelete) once round 2 started")
+	}
+
+	mu.Lock()
+	finalCalls := round2Calls
+	mu.Unlock()
+	if finalCalls != 1 {
+		t.Fatalf("expected round 2's word to be fetched exactly once total (via prefetch, never a redundant live fetch), got %d calls", finalCalls)
+	}
+}
+
+// TestFourFramesPrefetchClearedOnGameEnd confirms an unconsumed prefetch
+// entry is removed when the game ends, rather than leaking in
+// GameManager.fourFramesPrefetch forever.
+func TestFourFramesPrefetchClearedOnGameEnd(t *testing.T) {
+	gm := &GameManager{}
+	sessionID := uint(999)
+	gm.fourFramesPrefetch.Store(fourFramesPrefetchKey(sessionID, 3), fourFramesPrefetchResult{photos: []string{"https://images.pexels.com/fake/x.jpg"}})
+	gm.fourFramesPrefetch.Store(fourFramesPrefetchKey(sessionID+1, 3), fourFramesPrefetchResult{photos: []string{"https://images.pexels.com/fake/y.jpg"}})
+
+	gm.clearFourFramesPrefetch(sessionID)
+
+	if _, ok := gm.fourFramesPrefetch.Load(fourFramesPrefetchKey(sessionID, 3)); ok {
+		t.Fatal("expected the target session's prefetch entry to be removed")
+	}
+	if _, ok := gm.fourFramesPrefetch.Load(fourFramesPrefetchKey(sessionID+1, 3)); !ok {
+		t.Fatal("expected a DIFFERENT session's prefetch entry to be left untouched")
 	}
 }

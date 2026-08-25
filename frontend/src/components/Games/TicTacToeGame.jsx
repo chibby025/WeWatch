@@ -67,7 +67,11 @@ export default function TicTacToeGame({ gameState, players, currentUserId, onMov
           {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-gray-700">
             <div>
-              <h2 className="text-2xl font-bold text-white mb-1">Tic Tac Toe</h2>
+              <img
+                src="https://LetsWatchOut.b-cdn.net/games/logos/tic_tac_toe.webp"
+                alt="Tic Tac Toe"
+                className="h-8 sm:h-9 w-auto mb-1"
+              />
               <div className="flex items-center gap-2 text-sm">
                 <Users className="w-4 h-4 text-gray-400" />
                 <span className="text-gray-400">
@@ -102,7 +106,20 @@ export default function TicTacToeGame({ gameState, players, currentUserId, onMov
                         }
                       `}
                     >
-                      <div className="text-white font-semibold text-sm">{player.username}</div>
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        {/* Player avatar — same circular image-or-initials pattern
+                            GameLobbyModal's player-selection rows already use. */}
+                        <div className="w-5 h-5 rounded-full overflow-hidden flex-shrink-0 bg-gray-600 flex items-center justify-center">
+                          {player.avatar_url ? (
+                            <img src={player.avatar_url} alt={player.username} className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-[8px] font-bold text-white">
+                              {(player.username || '?').slice(0, 2).toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-white font-semibold text-sm truncate">{player.username}</div>
+                      </div>
                       <div className="text-2xl font-bold" style={{ color: player.color }}>
                         {index === 0 ? 'X' : 'O'}
                       </div>

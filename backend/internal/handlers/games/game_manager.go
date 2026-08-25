@@ -27,6 +27,7 @@ type GameManager struct {
 	HotSeatManager    *HotSeatManager
 	disconnectTimers  sync.Map // key: userID (uint) → *time.Timer; pending forfeit grace timers
 	counterTimers     sync.Map // key: gameSessionID (uint) → *time.Timer; pending vs_battle counter-window auto-resolve timers
+	fourFramesPrefetch sync.Map // key: "gameSessionID:roundIdx" (string) → fourFramesPrefetchResult; background-fetched next-round photos, consumed once by four_frames_start (see prefetchFourFramesRound in four_frames.go)
 }
 
 // GameSessionState holds the runtime state of an active game
@@ -75,6 +76,16 @@ type GameSessionState struct {
 	// round starts (see four_frames.go) — only the *word list order* is fixed
 	// per session here, not the photos themselves.
 	FourFramesRounds []FourFramesRound
+
+	// Four Frames-only — round index -> the optional 5th "alt view" photo
+	// URL, when fetchFourFramesPhotos returned one. Deliberately kept OFF
+	// GameData (same reasoning as above): revealing it early, before enough
+	// wrong guesses justify it, would defeat the whole point of pacing it as
+	// a later clue. Only copied into GameData["alt_photo_url"] — and
+	// therefore only ever broadcast — once fourFramesAltPhotoAfterAttempts
+	// is reached by any player. Absent entries (a round that only had 4
+	// usable photos that round) are the normal, expected case, not an error.
+	FourFramesAltPhotos map[int]string
 }
 
 // NewGameManager creates a new game manager instance
@@ -636,6 +647,7 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 
 	delete(gm.activeGames, gameSessionID)
 	delete(gm.roomActiveGames, roomID)
+	gm.clearFourFramesPrefetch(gameSessionID)
 
 	log.Printf("🎮 [GameManager] Ended game %d (status: %s, winner: %v)", gameSessionID, status, winnerID)
 

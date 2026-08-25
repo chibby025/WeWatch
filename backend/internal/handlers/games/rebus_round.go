@@ -862,21 +862,27 @@ const rebusPexelsMaxAttempts = 3
 
 var rebusPexelsRetryDelay = 300 * time.Millisecond
 
-// rebusWithPexelsRetry calls fn up to rebusPexelsMaxAttempts times, pausing
-// rebusPexelsRetryDelay between attempts, returning the last error if every
-// attempt fails. Generic so both fetchFourFramesPhotos ([]string) and
-// fetchSingleRebusPhoto (string) can share one retry loop instead of each
-// hand-rolling its own.
-func rebusWithPexelsRetry[T any](fn func() (T, error)) (T, error) {
+// rebusWithPexelsRetry calls fn up to maxAttempts times, pausing retryDelay
+// between attempts, returning the last error if every attempt fails.
+// Generic so both fetchFourFramesPhotos ([]string) and fetchSingleRebusPhoto
+// (string) can share one retry loop instead of each hand-rolling its own.
+// maxAttempts/retryDelay are parameters rather than the package-level
+// rebusPexels* constants baked in directly, specifically so Four Frames can
+// run its own tighter worst-case budget (see fourFramesPexelsMaxAttempts)
+// without changing Rebus Round's own tolerance — Four Frames' photo fetch is
+// primary, blocking content every single round, while Rebus Round's is a
+// secondary embellishment on an otherwise-instant local puzzle pick, so the
+// two have genuinely different stakes for "how long is too long to wait."
+func rebusWithPexelsRetry[T any](maxAttempts int, retryDelay time.Duration, fn func() (T, error)) (T, error) {
 	var result T
 	var lastErr error
-	for attempt := 1; attempt <= rebusPexelsMaxAttempts; attempt++ {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		result, lastErr = fn()
 		if lastErr == nil {
 			return result, nil
 		}
-		if attempt < rebusPexelsMaxAttempts {
-			time.Sleep(rebusPexelsRetryDelay)
+		if attempt < maxAttempts {
+			time.Sleep(retryDelay)
 		}
 	}
 	return result, lastErr
@@ -895,7 +901,7 @@ func fetchSingleRebusPhoto(word string) (string, error) {
 		return "", fmt.Errorf("PEXELS_API_KEY is not configured")
 	}
 
-	return rebusWithPexelsRetry(func() (string, error) {
+	return rebusWithPexelsRetry(rebusPexelsMaxAttempts, rebusPexelsRetryDelay, func() (string, error) {
 		// per_page bumped 5 -> 10: with the relevance check below, a wider
 		// candidate pool gives the filter a real chance to find a genuinely
 		// on-topic photo instead of settling for whatever came back first.
@@ -1194,20 +1200,74 @@ func rebusGenericHint(answer string) string {
 	return fmt.Sprintf("it's %d words (%s letters)", len(words), strings.Join(lens, "+"))
 }
 
+// rebusPositionalHint checks whether the player's most recent wrong guess
+// (normalized) exactly matches one word of a multi-word answer, and if so
+// tells them which direction the rest of the phrase lies in — e.g. guessing
+// "cream" against "ice cream" returns "you found 'cream' — there's a word
+// before it". Deliberately more specific/actionable than the generic
+// word-count hint, so it takes priority over it (and over an authored hint)
+// whenever it applies — see rebusHintForAttempt below.
+//
+// Returns "" for a single-word answer (no position to reveal), when the
+// guess doesn't match any word, or — for a repeated word like "the the" —
+// when it matches more than one, since the position would then be
+// ambiguous and guessing wrong is worse than saying nothing.
+func rebusPositionalHint(answer, guess string) string {
+	words := strings.Fields(answer)
+	if len(words) < 2 {
+		return ""
+	}
+	guessNorm := rebusNormalize(guess)
+	if guessNorm == "" {
+		return ""
+	}
+	matchIdx := -1
+	for i, w := range words {
+		if rebusNormalize(w) == guessNorm {
+			if matchIdx != -1 {
+				return ""
+			}
+			matchIdx = i
+		}
+	}
+	if matchIdx == -1 {
+		return ""
+	}
+	before := matchIdx > 0
+	after := matchIdx < len(words)-1
+	switch {
+	case before && after:
+		return fmt.Sprintf("you found '%s' — there's a word before it and a word after it", words[matchIdx])
+	case before:
+		return fmt.Sprintf("you found '%s' — there's a word before it", words[matchIdx])
+	case after:
+		return fmt.Sprintf("you found '%s' — there's a word after it", words[matchIdx])
+	default:
+		return "" // unreachable: len(words) >= 2 and matchIdx is a valid index
+	}
+}
+
 // rebusHintForAttempt builds the full wrong-guess suffix for the given
-// attempt count — "" before rebusHintAfterAttempt, otherwise the puzzle's own
-// authored hint (falling back to rebusGenericHint when none was authored),
+// attempt count — "" before rebusHintAfterAttempt, otherwise (in priority
+// order) a positional hint from the player's own most recent guess, the
+// puzzle's own authored hint, or rebusGenericHint as the final fallback —
 // plus a first-letter reveal once attemptCount reaches
-// rebusFirstLetterAfterAttempt. answer/authoredHint are passed separately
-// (rather than a RebusPuzzle) so the identical logic works for Four Frames'
-// FourFramesRound too, without either game needing the other's struct type.
-func rebusHintForAttempt(answer, authoredHint string, attemptCount int) string {
+// rebusFirstLetterAfterAttempt. Still gated behind the same attempt
+// threshold as every other hint here — a partial match doesn't unlock
+// anything earlier than a player would otherwise have gotten a hint at all.
+// answer/authoredHint are passed separately (rather than a RebusPuzzle) so
+// the identical logic works for Four Frames' FourFramesRound too, without
+// either game needing the other's struct type.
+func rebusHintForAttempt(answer, authoredHint string, attemptCount int, guess string) string {
 	if attemptCount < rebusHintAfterAttempt {
 		return ""
 	}
-	hint := authoredHint
+	hint := rebusPositionalHint(answer, guess)
 	if hint == "" {
-		hint = rebusGenericHint(answer)
+		hint = authoredHint
+		if hint == "" {
+			hint = rebusGenericHint(answer)
+		}
 	}
 	if attemptCount >= rebusFirstLetterAfterAttempt {
 		trimmed := strings.TrimSpace(answer)
@@ -1353,7 +1413,7 @@ func (gm *GameManager) processRebusRoundMove(gameState *GameSessionState, player
 		puzzle := gameState.RebusPuzzles[idx]
 		if !rebusAnswerMatches(puzzle, guess) {
 			attempts := rebusIncrementWrongAttempts(gameState, "wrong_attempts", playerID)
-			return false, nil, fmt.Errorf("not quite — try again!%s", rebusHintForAttempt(puzzle.Answer, puzzle.Hint, attempts))
+			return false, nil, fmt.Errorf("not quite — try again!%s", rebusHintForAttempt(puzzle.Answer, puzzle.Hint, attempts, guess))
 		}
 
 		rank := len(correctOrderRaw)

@@ -65,6 +65,23 @@ function PhotoCell({ url }) {
   );
 }
 
+// A real loading placeholder for the photo grid — previously the only
+// feedback while waiting on Pexels was the button text changing to "Loading
+// photos…"/"Loading…", with nothing at all where the photos are about to
+// appear. Reused for both the "waiting" phase's Start Round 1 and the
+// "reveal" phase's Next Round, so a slow fetch (see fourFramesHTTPClient's
+// own worst-case budget) at least reads as "clearly working" rather than
+// looking stuck.
+function PhotoGridSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-2 w-full max-w-[280px] mx-auto">
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="aspect-square rounded-xl bg-gray-800 animate-pulse" />
+      ))}
+    </div>
+  );
+}
+
 const GUESS_STUCK_TIMEOUT_MS = 6000;
 
 export default function FourFramesGame({ gameState, currentUserId, onMove, onClose, onPostResult, gameErrorMsg, gameErrorKey }) {
@@ -101,6 +118,12 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
   const gs = gameState?.game_state || {};
   const phase = gs.phase || 'waiting';
   const photos = gs.current_photos || [];
+  // The optional 5th "alt view" photo — only ever non-empty once ANY
+  // player's wrong-attempt count crosses the reveal threshold server-side
+  // (see fourFramesAltPhotoAfterAttempts in four_frames.go). Absent entirely
+  // for a round that only had 4 usable Pexels candidates that round — a
+  // normal, expected case, not an error.
+  const altPhotoUrl = gs.alt_photo_url || '';
   const scores = gs.scores || {};
   const correctOrder = gs.correct_order || [];
   const round = Number(gs.round) || 0;
@@ -281,7 +304,21 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
       {/* Header */}
       <div className="flex items-center justify-between pl-20 pr-5 py-4 border-b border-gray-800 flex-shrink-0">
         <div className="flex items-center gap-3">
-          <img src="https://LetsWatchOut.b-cdn.net/games/logos/four_frames.png" alt="Four Frames" className="h-8 sm:h-9 w-auto" />
+          {/* The asset itself is already tightly cropped — no whitespace to
+              trim — so making the mark read bigger without growing the
+              header's own reserved space means scaling the image visually
+              via a CSS transform (which never participates in layout) rather
+              than bumping its height. The wrapper below keeps the exact same
+              h-8/h-9 box the row already budgets for; only the <img> inside
+              it renders larger, centered on itself. */}
+          <div className="h-8 sm:h-9 flex items-center" style={{ overflow: 'visible' }}>
+            <img
+              src="https://LetsWatchOut.b-cdn.net/games/logos/four_frames.png"
+              alt="Four Frames"
+              className="h-8 sm:h-9 w-auto"
+              style={{ transform: 'scale(1.3)', transformOrigin: 'center' }}
+            />
+          </div>
           {round > 0 && totalRounds > 0 && (
             <span className="text-gray-400 text-sm ml-1">
               Round {positionInSet}/{FOUR_FRAMES_SET_SIZE}
@@ -321,13 +358,22 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
         {/* Waiting */}
         {phase === 'waiting' && (
           <div className="text-center">
-            <div className="text-6xl mb-5">{isHostUser ? '📸' : '⏳'}</div>
-            <h2 className="text-2xl font-bold text-white mb-2">{isHostUser ? 'Ready!' : 'Get Ready!'}</h2>
-            <p className="text-gray-400 mb-8 text-sm max-w-sm">
-              {isHostUser
-                ? '4 real photos appear — type the one word that connects them. First correct guess scores the most!'
-                : 'Waiting for the host to start the first round…'}
-            </p>
+            {isSendingNext ? (
+              <div className="mb-5">
+                <PhotoGridSkeleton />
+                <p className="text-purple-300 text-sm font-semibold mt-4 animate-pulse">Fetching your first 4 photos…</p>
+              </div>
+            ) : (
+              <>
+                <div className="text-6xl mb-5">{isHostUser ? '📸' : '⏳'}</div>
+                <h2 className="text-2xl font-bold text-white mb-2">{isHostUser ? 'Ready!' : 'Get Ready!'}</h2>
+                <p className="text-gray-400 mb-8 text-sm max-w-sm">
+                  {isHostUser
+                    ? '4 real photos appear — type the one word that connects them. First correct guess scores the most!'
+                    : 'Waiting for the host to start the first round…'}
+                </p>
+              </>
+            )}
             {isHostUser && (
               <div className="flex flex-col items-center gap-3">
                 <button
@@ -335,7 +381,7 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
                   disabled={isSendingNext}
                   className="px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold rounded-xl text-base transition-all"
                 >
-                  {isSendingNext ? 'Loading photos…' : 'Start Round 1'}
+                  {isSendingNext ? 'Loading…' : 'Start Round 1'}
                 </button>
                 <button
                   onClick={endOrLeave}
@@ -366,12 +412,38 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
               </div>
             )}
 
-            {/* Photo grid */}
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              {(photos.length ? photos : [null, null, null, null]).map((url, i) => (
-                <PhotoCell key={i} url={url} />
-              ))}
-            </div>
+            {/* Photo grid — while the host is loading the NEXT round (clicked
+                "Next Round" from reveal phase), show a loading skeleton
+                instead of leaving the just-revealed round's photos sitting
+                there with only the button text hinting anything's happening. */}
+            {phase === 'reveal' && isSendingNext ? (
+              <div className="mb-4">
+                <PhotoGridSkeleton />
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  {(photos.length ? photos : [null, null, null, null]).map((url, i) => (
+                    <PhotoCell key={i} url={url} />
+                  ))}
+                </div>
+                {/* 5th "alt view" photo — only appears once revealed
+                    server-side (see fourFramesAltPhotoAfterAttempts in
+                    four_frames.go). A wider single cell below the 2x2 grid
+                    rather than forcing a 5-cell grid layout, with a small
+                    flash badge to draw the eye the moment it appears. */}
+                {altPhotoUrl && phase === 'puzzle' && (
+                  <div className="relative mb-4" style={{ animation: 'fourFramesAltPhotoIn 0.5s ease-out' }}>
+                    <div className="w-full h-24 rounded-xl overflow-hidden bg-gray-900">
+                      <img src={altPhotoUrl} alt="" className="w-full h-full object-cover" />
+                    </div>
+                    <span className="absolute top-1.5 left-1.5 bg-cyan-600/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      ✨ New clue
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
 
             {/* Who's solved it so far */}
             {phase === 'puzzle' && (
@@ -489,6 +561,10 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
           40%, 80% { transform: translateX(6px); }
         }
         .animate-shake { animation: fourFramesShake 0.4s ease-in-out; }
+        @keyframes fourFramesAltPhotoIn {
+          0%   { opacity: 0; transform: translateY(-6px) scale(0.97); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
       `}</style>
 
       {phase === 'ended' && (

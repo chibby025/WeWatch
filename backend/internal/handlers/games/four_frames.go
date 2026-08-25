@@ -675,7 +675,36 @@ type pexelsPhotoResponse struct {
 	} `json:"photos"`
 }
 
-var fourFramesHTTPClient = &http.Client{Timeout: 10 * time.Second}
+// Four Frames' own tighter Pexels retry budget (see rebusWithPexelsRetry's
+// own doc comment for why this differs from Rebus Round's
+// rebusPexelsMaxAttempts/rebusPexelsRetryDelay). Before this, Four Frames
+// shared Rebus Round's 3-attempt/10s-timeout budget — a worst case of
+// roughly 30.6s (10s + 300ms + 10s + 300ms + 10s) if Pexels was genuinely
+// struggling. Four Frames' fetch blocks the room's PRIMARY content every
+// single round (unlike Rebus Round's, a rare embellishment on an otherwise-
+// instant local puzzle pick), so a much tighter cap — ~12.3s (6s + 300ms +
+// 6s) — is worth the small increase in "not enough usable photos" failures
+// on a genuinely bad Pexels day. A typical successful call measures well
+// under either budget (~1.2s, confirmed live during earlier testing).
+const fourFramesPexelsMaxAttempts = 2
+
+var fourFramesPexelsRetryDelay = 300 * time.Millisecond
+var fourFramesHTTPClient = &http.Client{Timeout: 6 * time.Second}
+
+// fourFramesPhotosPerRound — one more than the 4 actually shown in the grid.
+// The 5th is never included in the broadcast current_photos; it's held back
+// as the "alt view" hint (see fourFramesAltPhotoAfterAttempts below) until
+// enough wrong guesses justify revealing it. Deliberately NOT required for
+// a round to start at all — see fetchFourFramesPhotos' own comment — a word
+// with only 4 good candidates that round still plays completely normally,
+// it just has no alt-photo hint available.
+const fourFramesPhotosPerRound = 5
+
+// fourFramesAltPhotoAfterAttempts — the wrong-attempt count (by ANY player;
+// whoever reaches it first) that reveals the 5th photo to the whole room.
+// One tier past rebusFirstLetterAfterAttempt (3) — a deliberately bigger,
+// later clue than the text hints, not an earlier one.
+const fourFramesAltPhotoAfterAttempts = 4
 
 // pexelsAltLooksRelevant is a soft relevance check against Pexels' own alt
 // text for a photo (a short description Pexels attaches to most, though not
@@ -712,19 +741,24 @@ func pexelsAltLooksRelevant(word, alt string) bool {
 
 // fetchFourFramesPhotos calls the real Pexels search API server-side (the API
 // key is a secret — this must never run client-side, unlike OpenTDB/LRCLIB
-// which need no key at all) and returns 4 photo URLs for word. Wrapped in
+// which need no key at all) and returns up to fourFramesPhotosPerRound (5)
+// photo URLs for word — the first 4 are the actual gameplay grid, a possible
+// 5th is the optional "alt view" hint (see fourFramesAltPhotoAfterAttempts).
+// Deliberately still SUCCEEDS with only 4 (the minimum core gameplay needs)
+// if a 5th genuinely isn't available — the bonus hint photo must never put
+// the round itself at risk of failing to start. Wrapped in
 // rebusWithPexelsRetry (see rebus_round.go) so a transient network/Pexels
 // hiccup doesn't fail the whole round-start outright, and requests a wider
 // candidate pool (15, not 6) so a handful of results with no usable
-// Large/Medium URL — or a weak, off-topic top hit — still leaves enough
-// good candidates to fill all 4 slots from Pexels' own relevance ranking.
+// Large/Medium URL — or a weak, off-topic top hit — still leaves enough good
+// candidates to fill every slot from Pexels' own relevance ranking.
 func fetchFourFramesPhotos(word string) ([]string, error) {
 	apiKey := os.Getenv("PEXELS_API_KEY")
 	if apiKey == "" {
 		return nil, fmt.Errorf("PEXELS_API_KEY is not configured")
 	}
 
-	return rebusWithPexelsRetry(func() ([]string, error) {
+	return rebusWithPexelsRetry(fourFramesPexelsMaxAttempts, fourFramesPexelsRetryDelay, func() ([]string, error) {
 		endpoint := "https://api.pexels.com/v1/search?query=" + url.QueryEscape(word) + "&per_page=15&orientation=square"
 		req, err := http.NewRequest("GET", endpoint, nil)
 		if err != nil {
@@ -747,10 +781,11 @@ func fetchFourFramesPhotos(word string) ([]string, error) {
 			return nil, fmt.Errorf("failed to decode Pexels response: %w", err)
 		}
 
-		// Two passes: relevant (alt text plausibly matches the word) fill the 4
+		// Two passes: relevant (alt text plausibly matches the word) fill the
 		// slots first; fallback (off-topic or no-alt-text) photos only get used
-		// if relevant ones alone don't reach 4 — never fail the round just
-		// because the relevance filter was stricter than the pool could satisfy.
+		// if relevant ones alone don't reach fourFramesPhotosPerRound — never
+		// fail the round just because the relevance filter was stricter than
+		// the pool could satisfy.
 		var relevant, fallback []string
 		for _, p := range parsed.Photos {
 			// Prefer a square-ish crop (large) for a consistent 2x2 grid on the
@@ -767,20 +802,20 @@ func fetchFourFramesPhotos(word string) ([]string, error) {
 			} else {
 				fallback = append(fallback, u)
 			}
-			if len(relevant) == 4 {
+			if len(relevant) == fourFramesPhotosPerRound {
 				break
 			}
 		}
 		urls := relevant
 		for _, u := range fallback {
-			if len(urls) == 4 {
+			if len(urls) == fourFramesPhotosPerRound {
 				break
 			}
 			urls = append(urls, u)
 		}
 
 		if len(urls) < 4 {
-			return nil, fmt.Errorf("Pexels returned only %d usable photo(s) for query %q, need 4", len(urls), word)
+			return nil, fmt.Errorf("Pexels returned only %d usable photo(s) for query %q, need at least 4", len(urls), word)
 		}
 		return urls, nil
 	})
@@ -791,6 +826,58 @@ func fetchFourFramesPhotos(word string) ([]string, error) {
 // fetcher instead of hitting the real network/needing a real API key. Real
 // production code never reassigns this.
 var fourFramesPhotoFetcher = fetchFourFramesPhotos
+
+// fourFramesPrefetchResult is what a background prefetch stashes for
+// four_frames_start to consume the next time that exact round is started.
+type fourFramesPrefetchResult struct {
+	photos []string
+	err    error
+}
+
+func fourFramesPrefetchKey(gameSessionID uint, roundIdx int) string {
+	return fmt.Sprintf("%d:%d", gameSessionID, roundIdx)
+}
+
+// prefetchFourFramesRound fetches one round's photos in the background and
+// stashes the result under a key four_frames_start checks first the next
+// time that round is actually started — a pure best-effort latency
+// optimization: if this hasn't finished (or failed) by the time the round is
+// needed, the caller falls straight back to a normal live fetch, byte-for-
+// byte identical to the behavior before this existed. Meant to be launched
+// via `go gm.prefetchFourFramesRound(...)` right after the CURRENT round's
+// setup completes, since that's the earliest point the NEXT round's word is
+// already known (FourFramesRounds is a fixed, pre-shuffled list for the
+// whole session) and there's real idle time (players answering the current
+// round) to spend the fetch during.
+//
+// fetcher is passed in explicitly — captured by the caller from the
+// fourFramesPhotoFetcher package var BEFORE spawning this as a goroutine —
+// rather than read from that package var directly in here. A goroutine that
+// outlives its caller reading a package-level var is exactly the kind of
+// thing `go test -race` exists to catch: a test's own fakeFourFramesFetcher
+// swapping the var out and back via a deferred restore() could otherwise
+// race against this goroutine's own read of it.
+func (gm *GameManager) prefetchFourFramesRound(gameSessionID uint, roundIdx int, word string, fetcher func(string) ([]string, error)) {
+	photos, err := fetcher(word)
+	gm.fourFramesPrefetch.Store(fourFramesPrefetchKey(gameSessionID, roundIdx), fourFramesPrefetchResult{photos: photos, err: err})
+}
+
+// clearFourFramesPrefetch removes any unconsumed background-prefetched photo
+// result for a game session that's ending. A normal "next round" already
+// consumes (LoadAndDelete) its own prefetch entry in four_frames_start — this
+// only ever cleans up the one prefetch, if any, that was still in-flight or
+// simply never reached when the game ended early (an "End Game" forfeit, or
+// the checkpoint ending the game right after the round that was prefetching
+// for).
+func (gm *GameManager) clearFourFramesPrefetch(gameSessionID uint) {
+	prefix := fmt.Sprintf("%d:", gameSessionID)
+	gm.fourFramesPrefetch.Range(func(key, _ interface{}) bool {
+		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
+			gm.fourFramesPrefetch.Delete(k)
+		}
+		return true
+	})
+}
 
 // fourFramesCheckpointSize — the word bank is far too long to play
 // through in one sitting, so the game is paced in sets of this many rounds:
@@ -839,21 +926,59 @@ func (gm *GameManager) processFourFramesMove(gameState *GameSessionState, player
 			return false, nil, fmt.Errorf("no more rounds — end the game to see results")
 		}
 		fr := gameState.FourFramesRounds[nextIdx]
+		gameSessionID := gameState.GameSession.ID
 
-		photos, ferr := fourFramesPhotoFetcher(fr.Word)
-		if ferr != nil {
-			log.Printf("⚠️ [FourFrames] Pexels fetch failed for %q: %v", fr.Word, ferr)
-			return false, nil, fmt.Errorf("couldn't load photos for this round — try again")
+		// A background prefetch from the PREVIOUS round's own four_frames_start
+		// (below) may have already fetched this exact round's photos while
+		// players were still answering the previous one — check for it first,
+		// one-shot consumption via LoadAndDelete, before ever making this move
+		// wait on a live network call. A miss (nothing prefetched yet, or this
+		// is round 1) falls straight back to the exact same live fetch that
+		// always ran here before.
+		var photos []string
+		if cached, ok := gm.fourFramesPrefetch.LoadAndDelete(fourFramesPrefetchKey(gameSessionID, nextIdx)); ok {
+			if result, ok := cached.(fourFramesPrefetchResult); ok && result.err == nil && len(result.photos) >= 4 {
+				photos = result.photos
+			}
+		}
+		if photos == nil {
+			fetched, ferr := fourFramesPhotoFetcher(fr.Word)
+			if ferr != nil {
+				log.Printf("⚠️ [FourFrames] Pexels fetch failed for %q: %v", fr.Word, ferr)
+				return false, nil, fmt.Errorf("couldn't load photos for this round — try again")
+			}
+			photos = fetched
 		}
 
 		gameState.GameData["phase"] = "puzzle"
 		gameState.GameData["round"] = float64(nextIdx + 1)
-		gameState.GameData["current_photos"] = photos
+		gameState.GameData["current_photos"] = photos[:4]
+		gameState.GameData["alt_photo_url"] = ""
 		gameState.GameData["correct_order"] = []interface{}{}
 		gameState.GameData["revealed_answer"] = ""
 		gameState.GameData["revealed_alternates"] = []interface{}{}
 		gameState.GameData["started_at"] = float64(time.Now().UnixMilli())
 		rebusResetWrongAttempts(gameState, "wrong_attempts")
+
+		if gameState.FourFramesAltPhotos == nil {
+			gameState.FourFramesAltPhotos = map[int]string{}
+		}
+		if len(photos) >= fourFramesPhotosPerRound {
+			gameState.FourFramesAltPhotos[nextIdx] = photos[4]
+		} else {
+			delete(gameState.FourFramesAltPhotos, nextIdx)
+		}
+
+		// Best-effort background prefetch of the NEXT round's photos — see
+		// prefetchFourFramesRound's own doc comment for the full reasoning and
+		// why fetcher is captured here rather than read inside the goroutine.
+		nextRoundIdx := nextIdx + 1
+		if nextRoundIdx < len(gameState.FourFramesRounds) {
+			nextWord := gameState.FourFramesRounds[nextRoundIdx].Word
+			fetcher := fourFramesPhotoFetcher
+			go gm.prefetchFourFramesRound(gameSessionID, nextRoundIdx, nextWord, fetcher)
+		}
+
 		return false, nil, nil
 
 	case "answer":
@@ -884,7 +1009,25 @@ func (gm *GameManager) processFourFramesMove(gameState *GameSessionState, player
 		fr := gameState.FourFramesRounds[idx]
 		if !fourFramesAnswerMatches(fr, guess) {
 			attempts := rebusIncrementWrongAttempts(gameState, "wrong_attempts", playerID)
-			return false, nil, fmt.Errorf("not quite — try again!%s", rebusHintForAttempt(fr.Word, fr.Hint, attempts))
+			// Reveal the 5th "alt view" photo to the WHOLE room — not just this
+			// player — the first time ANY player's own wrong-attempt count
+			// reaches the threshold. Public rather than per-player: the photo
+			// grid itself is already shared state everyone sees identically, so
+			// a private reveal would leave the grid visibly inconsistent
+			// between players glancing at the same round. Checked-then-set so
+			// this only actually happens once per round (a later player crossing
+			// the threshold too is a harmless no-op, not a second reveal). A
+			// round with no alt photo available (fetchFourFramesPhotos only
+			// found 4 usable candidates that round) silently has nothing to
+			// reveal — never an error, just no bonus hint this time.
+			if attempts >= fourFramesAltPhotoAfterAttempts {
+				if current, _ := gameState.GameData["alt_photo_url"].(string); current == "" {
+					if altURL, exists := gameState.FourFramesAltPhotos[idx]; exists && altURL != "" {
+						gameState.GameData["alt_photo_url"] = altURL
+					}
+				}
+			}
+			return false, nil, fmt.Errorf("not quite — try again!%s", rebusHintForAttempt(fr.Word, fr.Hint, attempts, guess))
 		}
 
 		rank := len(correctOrderRaw)

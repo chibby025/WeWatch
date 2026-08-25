@@ -811,7 +811,18 @@ const RoomPageNew = () => {
       const capped = msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs;
       _roomChatCache.set(cacheKey, capped.slice(-50));
       setMessages(capped);
-      restoreOrScrollToBottom(cacheKey, capped, response.data.last_read_message_id);
+      // scrollToLatest: navigating in here fresh from LobbyPage (room card
+      // click, "Enter Room", a live-session avatar, a notification, etc. —
+      // see LobbyPage.jsx's navigate() calls) should always land on the
+      // newest message, the same "you're caught up" feeling as coming back
+      // from a watch session (which never re-triggers this at all — that
+      // page never unmounts, so its chat has been live-scrolling to the
+      // bottom via the room_chat WS handler the whole time you were away).
+      // Without this flag, a room with real unread backlog would otherwise
+      // land on the first-unread position instead of the true latest
+      // message — correct for "resume where you left off" in general, but
+      // not what a fresh lobby->room visit should feel like.
+      restoreOrScrollToBottom(cacheKey, capped, response.data.last_read_message_id, !!location.state?.scrollToLatest);
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     } finally {
@@ -1433,11 +1444,11 @@ const RoomPageNew = () => {
   // Takes the message list explicitly (not the `messages` state closure) since
   // this always runs synchronously right after setMessages(msgsList) in the
   // same tick, before that state update has actually applied.
-  const restoreOrScrollToBottom = (cacheKey, msgsList, serverLastReadId) => {
+  const restoreOrScrollToBottom = (cacheKey, msgsList, serverLastReadId, forceLatest = false) => {
     if (!msgsList.length) return;
     const lastReadId = serverLastReadId ?? null;
     const newest = msgsList[msgsList.length - 1];
-    if (lastReadId != null && lastReadId !== newest.id) {
+    if (!forceLatest && lastReadId != null && lastReadId !== newest.id) {
       const lastReadIndex = msgsList.findIndex((m) => m.id === lastReadId);
       // lastReadIndex === -1 means that message fell out of the fetched/capped
       // window (e.g. a very long time away) — nothing to restore to, fall
