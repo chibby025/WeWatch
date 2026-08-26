@@ -173,6 +173,13 @@ export default function PoolGame({ gameState, players, currentUserId, onMove, on
         // rolling — purely cosmetic (see pool.go's processPoolShotProgress),
         // never touches foul/turn/win state.
         onMove({ move_type: 'shot_progress', ...data.payload });
+      } else if (data.type === 'game_event') {
+        // Live aim/cue-stick relay while it's the shooter's turn — an
+        // opaque, already-serialised AimEvent from the embedded engine's own
+        // real multiplayer event system (see wewatch-bridge.js's
+        // installBroadcastRelay). WeWatch's backend never parses this, it
+        // only relays the raw string to the whole room — see pool.go.
+        onMove({ move_type: 'game_event', payload: data.payload });
       }
     };
     window.addEventListener('message', handler);
@@ -217,6 +224,19 @@ export default function PoolGame({ gameState, players, currentUserId, onMove, on
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iframeReady, JSON.stringify(data.live_ball_positions), postToFrame]);
+
+  // Forwards the current turn-holder's live aim/cue-stick state to this
+  // player's own iframe — a harmless no-op on the shooter's own device (the
+  // bridge's handleGameEvent ignores it there via isMyTurnNow), and on every
+  // other device drives the engine's own real WatchAim controller (camera +
+  // cue stick follow the shooter). data.aim_event is already a JSON string
+  // (see pool.go/wewatch-bridge.js), so no extra JSON.stringify is needed in
+  // the dependency array — it's a plain string primitive already.
+  useEffect(() => {
+    if (!iframeReady) return;
+    if (!data.aim_event) return;
+    postToFrame({ type: 'game_event', payload: data.aim_event });
+  }, [iframeReady, data.aim_event, postToFrame]);
 
   useEffect(() => {
     if (!iframeReady) return;

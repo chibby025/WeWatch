@@ -353,8 +353,12 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 	// only while a piece is actively being dragged) — a live position update,
 	// not a discrete game action worth persisting to the move history. pool's
 	// shot_progress is the same idea again (~10 Hz, only while a shot is
-	// actively rolling) — see processPoolShotProgress in pool.go.
-	volatileRT := map[string]bool{"state_sync": true, "paddle_move": true, "mallet_move": true, "piece_drag": true, "shot_progress": true}
+	// actively rolling) — see processPoolShotProgress in pool.go. pool's
+	// game_event is the same idea once more, at the embedded engine's own
+	// ~4Hz aim-input throttle — a purely cosmetic, opaque relay of the
+	// shooter's live aim/cue-stick state while it's their turn, never a
+	// discrete game action (see pool.go's game_event case).
+	volatileRT := map[string]bool{"state_sync": true, "paddle_move": true, "mallet_move": true, "piece_drag": true, "shot_progress": true, "game_event": true}
 	isVolatile := volatileRT[moveType] &&
 		(gameState.GameSession.GameType == "ping_pong" || gameState.GameSession.GameType == "air_hockey" || gameState.GameSession.GameType == "jigsaw" || gameState.GameSession.GameType == "pool")
 

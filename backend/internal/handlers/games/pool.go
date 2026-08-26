@@ -104,6 +104,20 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 		return processPoolShotProgress(gameState, moveData)
 	}
 
+	// Live aim/cue-stick relay — a 100% opaque passthrough of the embedded
+	// engine's own serialised AimEvent (see wewatch-bridge.js's
+	// installBroadcastRelay/handleGameEvent and container.ts's
+	// ensureWatchAimController/pushIncomingGameEvent). WeWatch's backend
+	// never parses this payload — it has no reason to, since foul/turn/win
+	// is decided exclusively by the "shot" case below regardless of what a
+	// player was aiming at along the way. Registered alongside shot_progress
+	// in game_manager.go's volatileRT/isVolatile gate, so this never touches
+	// the DB either.
+	if moveType == "game_event" {
+		gameState.GameData["aim_event"] = moveData["payload"]
+		return false, nil, nil
+	}
+
 	if moveType != "shot" {
 		return false, nil, fmt.Errorf("unknown pool move type: %s", moveType)
 	}
@@ -263,8 +277,14 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 	gameState.GameData["ball_positions"] = ballPositions
 	// A late joiner's rehydration reads GameData wholesale — never leave a
 	// stale mid-shot snapshot sitting next to the now-fresh authoritative
-	// positions once the real, final report has landed.
+	// positions once the real, final report has landed. aim_event is cleared
+	// for the same reason: it's not a late-join concern (isVolatile already
+	// keeps it out of the persisted GameSession.GameState this rehydration
+	// reads from), but a stale aim angle from whoever's turn just ended
+	// would otherwise ride along on every ordinary "shot" broadcast from now
+	// on until the next aim_event happens to overwrite it.
 	delete(gameState.GameData, "live_ball_positions")
+	delete(gameState.GameData, "aim_event")
 
 	if eightPotted {
 		// Illegal in two cases: any other foul already happened this shot,
