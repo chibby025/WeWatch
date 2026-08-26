@@ -92,6 +92,40 @@ function shipCells(r, c, size, horizontal) {
   return cells;
 }
 
+// Shared validity check used by placement, click-relocate, nudge, and
+// rotate: cells must be in bounds (shipCells already returns null
+// otherwise) and must not overlap any OTHER placed ship (excludeName is
+// the ship being moved, so it never collides with its own old position).
+function cellsValid(cells, placedShips, excludeName) {
+  if (!cells) return false;
+  const otherOccupied = new Set(
+    placedShips
+      .filter(s => s.name !== excludeName)
+      .flatMap(s => s.cells.map(({ r, c }) => idx(r, c)))
+  );
+  return cells.every(({ r, c }) => !otherOccupied.has(idx(r, c)));
+}
+
+// Rotates a placed ship's cells 90° around its own anchor (first) cell,
+// clamping the anchor back into bounds if the new orientation would
+// otherwise run off the grid edge. shipCells only ever extends in the
+// +row/+col direction from the anchor, so any overflow is always on the
+// high side — a simple min() clamp is enough to "shift it back in."
+function computeRotatedCells(cells) {
+  if (!cells || cells.length === 0) return null;
+  const size = cells.length;
+  const curHorizontal = size <= 1 || cells[0].r === cells[1]?.r;
+  const newHorizontal = !curHorizontal;
+  let r0 = cells[0].r;
+  let c0 = cells[0].c;
+  if (newHorizontal) {
+    c0 = Math.min(c0, GRID_SIZE - size);
+  } else {
+    r0 = Math.min(r0, GRID_SIZE - size);
+  }
+  return shipCells(r0, c0, size, newHorizontal);
+}
+
 function buildOccupancyMap(ships) {
   const map = {};
   for (const s of ships) {
@@ -351,7 +385,85 @@ function GridLabels() {
 // previewOccupancy: same shape as occupancyMap but for hover preview cells.
 // ghostShip: { r, c, name, size, horizontal } — drives the floating ghost overlay.
 const ROW_LABEL_W = 24; // w-6 = 24px
-function PlacementGrid({ occupancyMap, previewOccupancy, previewValid, onCellClick, onCellHover, onLeave, ghostShip }) {
+
+// ── Fine-tune D-pad + rotate cluster ──────────────────────────────────────────
+// Floats just outside the selected ship's own footprint (flips to the
+// opposite side if it would run off the grid's right edge) — a compact,
+// always-reachable alternative to dragging on a small touch screen. Only
+// rendered when the currently selected ship is actually placed on the
+// board (see PlacementGrid below); click-to-relocate via the grid still
+// works on top of this, this is just a one-cell-at-a-time fine-tune.
+function ShipAdjustControls({ cells, nudgeValidity, canRotate, onNudge, onRotate, labelH }) {
+  if (!cells || cells.length === 0) return null;
+
+  const rs = cells.map(c => c.r);
+  const cs = cells.map(c => c.c);
+  const minR = Math.min(...rs), maxR = Math.max(...rs);
+  const minC = Math.min(...cs), maxC = Math.max(...cs);
+
+  const BTN = 22;
+  const BTN_GAP = 2;
+  const OFFSET = 6; // gap between the ship's edge and the cluster
+  const clusterSize = BTN * 3 + BTN_GAP * 2;
+
+  const shipLeftPx    = ROW_LABEL_W + minC * CELL_PX;
+  const shipRightPx   = ROW_LABEL_W + (maxC + 1) * CELL_PX;
+  const shipTopPx     = labelH + minR * CELL_PX;
+  const shipBottomPx  = labelH + (maxR + 1) * CELL_PX;
+  const gridRightEdge = ROW_LABEL_W + GRID_SIZE * CELL_PX;
+
+  let left = shipRightPx + OFFSET;
+  if (left + clusterSize > gridRightEdge) {
+    left = shipLeftPx - OFFSET - clusterSize;
+  }
+  let top = (shipTopPx + shipBottomPx) / 2 - clusterSize / 2;
+  top = Math.max(labelH, Math.min(top, labelH + GRID_SIZE * CELL_PX - clusterSize));
+
+  const btnStyle = { width: BTN, height: BTN, fontSize: 10, lineHeight: 1 };
+  const btnCls = (active) =>
+    `flex items-center justify-center rounded transition-colors ${
+      active
+        ? 'bg-cyan-700 hover:bg-cyan-600 active:bg-cyan-500 text-white'
+        : 'bg-slate-800/80 text-slate-600 cursor-not-allowed'
+    }`;
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left,
+        top,
+        display: 'grid',
+        gridTemplateColumns: `${BTN}px ${BTN}px ${BTN}px`,
+        gridTemplateRows: `${BTN}px ${BTN}px ${BTN}px`,
+        gap: BTN_GAP,
+        zIndex: 20,
+      }}
+    >
+      <div />
+      <button type="button" title="Move up" disabled={!nudgeValidity.up}
+        onClick={() => onNudge(-1, 0)} className={btnCls(nudgeValidity.up)} style={btnStyle}>▲</button>
+      <div />
+
+      <button type="button" title="Move left" disabled={!nudgeValidity.left}
+        onClick={() => onNudge(0, -1)} className={btnCls(nudgeValidity.left)} style={btnStyle}>◀</button>
+      <button type="button" title="Rotate" disabled={!canRotate}
+        onClick={onRotate} className={btnCls(canRotate)} style={btnStyle}>⟳</button>
+      <button type="button" title="Move right" disabled={!nudgeValidity.right}
+        onClick={() => onNudge(0, 1)} className={btnCls(nudgeValidity.right)} style={btnStyle}>▶</button>
+
+      <div />
+      <button type="button" title="Move down" disabled={!nudgeValidity.down}
+        onClick={() => onNudge(1, 0)} className={btnCls(nudgeValidity.down)} style={btnStyle}>▼</button>
+      <div />
+    </div>
+  );
+}
+
+function PlacementGrid({
+  occupancyMap, previewOccupancy, previewValid, onCellClick, onCellHover, onLeave, ghostShip,
+  selectedPlacedCells, nudgeValidity, canRotate, onNudge, onRotate,
+}) {
   const labelsRef = useRef(null);
   const [labelH, setLabelH] = useState(16);
   useEffect(() => {
@@ -421,6 +533,19 @@ function PlacementGrid({ occupancyMap, previewOccupancy, previewValid, onCellCli
         >
           <GhostShipOverlay name={ghostShip.name} size={ghostShip.size} horizontal={ghostShip.horizontal} />
         </div>
+      )}
+
+      {/* Fine-tune D-pad + rotate — shown next to the selected ship once
+          it's actually placed on the board. */}
+      {selectedPlacedCells && (
+        <ShipAdjustControls
+          cells={selectedPlacedCells}
+          nudgeValidity={nudgeValidity}
+          canRotate={canRotate}
+          onNudge={onNudge}
+          onRotate={onRotate}
+          labelH={labelH}
+        />
       )}
     </div>
   );
@@ -509,6 +634,29 @@ function CombatGrid({ label, board, shipOccupancy, sunkCells, isEnemy, canAttack
   );
 }
 
+// ── Player avatar — circular image, or initials if none is set ────────────────
+// Same image-or-initials fallback pattern already used by TicTacToeGame's
+// turn indicator (player.avatar_url from the room's own player-selection
+// payload, threaded straight through on the players[] prop).
+function PlayerAvatar({ username, avatarUrl, size = 26, highlighted }) {
+  return (
+    <div
+      className={`rounded-full overflow-hidden flex-shrink-0 bg-slate-700 flex items-center justify-center transition-shadow ${
+        highlighted ? 'ring-2 ring-cyan-400' : ''
+      }`}
+      style={{ width: size, height: size }}
+    >
+      {avatarUrl ? (
+        <img src={avatarUrl} alt={username || ''} className="w-full h-full object-cover" />
+      ) : (
+        <span className="font-bold text-white select-none" style={{ fontSize: size * 0.36 }}>
+          {(username || '?').slice(0, 2).toUpperCase()}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function BattleshipGame({ gameState, players, currentUserId, onMove, onClose, onEndGame }) {
   ensureBSCSS();
@@ -521,6 +669,7 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
   const combatTurnId   = gs.current_turn ?? null;
 
   const isHostUser = (gameState?.host_id ?? players?.[0]?.user_id) === currentUserId;
+  const me         = (players || []).find(p => p.user_id === currentUserId);
   const opponent   = (players || []).find(p => p.user_id !== currentUserId);
 
   const iHavePlaced  = !!placed[String(currentUserId)];
@@ -558,7 +707,12 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
   }, [iHavePlaced]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const currentFleet = FLEET.find(f => f.name === selectedShip) || FLEET[0];
-  const previewCells = hoverCell && !iHavePlaced
+  // Once the selected ship is already on the board, the D-pad is the tool
+  // for adjusting it — suppress the floating hover ghost/tint (it was
+  // rendering at the same time as the D-pad and looked cluttered/confusing).
+  // Click-to-relocate still works underneath, just without the preview.
+  const selectedShipIsPlaced = placedShips.some(s => s.name === selectedShip);
+  const previewCells = hoverCell && !iHavePlaced && !selectedShipIsPlaced
     ? shipCells(hoverCell.r, hoverCell.c, currentFleet.size, horizontal)
     : null;
 
@@ -568,15 +722,10 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
     name: currentFleet.name, size: currentFleet.size, horizontal,
   } : null;
 
-  const previewValid = useMemo(() => {
-    if (!previewCells) return false;
-    const othersOccupied = new Set(
-      placedShips
-        .filter(s => s.name !== selectedShip)
-        .flatMap(s => s.cells.map(({ r, c }) => idx(r, c)))
-    );
-    return previewCells.every(({ r, c }) => !othersOccupied.has(idx(r, c)));
-  }, [previewCells, placedShips, selectedShip]);
+  const previewValid = useMemo(
+    () => cellsValid(previewCells, placedShips, selectedShip),
+    [previewCells, placedShips, selectedShip],
+  );
 
   // Rich occupancy map for the hover preview (includes name, sectionIndex,
   // totalSections, horizontal) — matches buildOccupancyMap's shape, though
@@ -598,6 +747,46 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
     return map;
   }, [previewCells, selectedShip]);
 
+  // ── Fine-tune controls for the selected ship, once it's actually placed ──
+  // A small D-pad + rotate icon shown next to the ship on the board — a
+  // mobile-friendly alternative to drag-repositioning (click-to-relocate via
+  // the grid, above, still works too; this is just a one-cell-at-a-time
+  // nudge on top of it).
+  const selectedPlacedShipEntry = useMemo(
+    () => placedShips.find(s => s.name === selectedShip) || null,
+    [placedShips, selectedShip],
+  );
+
+  const nudgeValidity = useMemo(() => {
+    if (!selectedPlacedShipEntry) return { up: false, down: false, left: false, right: false };
+    const check = (dr, dc) => {
+      const moved = selectedPlacedShipEntry.cells.map(({ r, c }) => ({ r: r + dr, c: c + dc }));
+      if (moved.some(({ r, c }) => r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE)) return false;
+      return cellsValid(moved, placedShips, selectedShip);
+    };
+    return { up: check(-1, 0), down: check(1, 0), left: check(0, -1), right: check(0, 1) };
+  }, [selectedPlacedShipEntry, placedShips, selectedShip]);
+
+  const handleNudge = useCallback((dr, dc) => {
+    if (iHavePlaced || !selectedPlacedShipEntry) return;
+    const moved = selectedPlacedShipEntry.cells.map(({ r, c }) => ({ r: r + dr, c: c + dc }));
+    if (moved.some(({ r, c }) => r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE)) return;
+    if (!cellsValid(moved, placedShips, selectedShip)) return;
+    setPlacedShips(prev => prev.map(s => (s.name === selectedShip ? { ...s, cells: moved } : s)));
+  }, [iHavePlaced, selectedPlacedShipEntry, placedShips, selectedShip]);
+
+  // Rotating pivots on the ship's own anchor cell; computeRotatedCells
+  // handles shifting it back into bounds if the new orientation overflows.
+  const rotatedPreview = useMemo(
+    () => (selectedPlacedShipEntry ? computeRotatedCells(selectedPlacedShipEntry.cells) : null),
+    [selectedPlacedShipEntry],
+  );
+  const canRotateSelected = !!rotatedPreview && cellsValid(rotatedPreview, placedShips, selectedShip);
+  const handleRotateSelected = useCallback(() => {
+    if (iHavePlaced || !canRotateSelected || !rotatedPreview) return;
+    setPlacedShips(prev => prev.map(s => (s.name === selectedShip ? { ...s, cells: rotatedPreview } : s)));
+  }, [iHavePlaced, canRotateSelected, rotatedPreview, selectedShip]);
+
   const handleCellHover = useCallback((r, c) => {
     if (iHavePlaced) return;
     setHoverCell({ r, c });
@@ -613,18 +802,13 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
       return;
     }
     const cells = shipCells(r, c, currentFleet.size, horizontal);
-    if (!cells) return;
-    const othersOccupied = new Set(
-      placedShips
-        .filter(s => s.name !== selectedShip)
-        .flatMap(s => s.cells.map(({ r: pr, c: pc }) => idx(pr, pc)))
-    );
-    if (cells.some(({ r: nr, c: nc }) => othersOccupied.has(idx(nr, nc)))) return;
+    if (!cellsValid(cells, placedShips, selectedShip)) return;
     const next = placedShips.filter(s => s.name !== selectedShip);
     next.push({ name: selectedShip, cells });
     setPlacedShips(next);
-    const nextUnplaced = FLEET.find(f => !next.find(s => s.name === f.name));
-    if (nextUnplaced) setSelectedShip(nextUnplaced.name);
+    // No auto-advance — the player must explicitly select the next ship.
+    // Staying on the ship just placed keeps its fine-tune arrows/rotate
+    // controls visible immediately, which is the whole point on mobile.
   }, [iHavePlaced, currentFleet, horizontal, placedShips, selectedShip, occupancyMap]);
 
   const allPlaced = FLEET.every(f => placedShips.find(s => s.name === f.name));
@@ -687,8 +871,18 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
     });
   }, [boards]);
 
-  const endOrLeave = () => {
-    if (isHostUser && onEndGame) onEndGame();
+  // × always just leaves locally for that one client — the match keeps
+  // running for whoever's left. "End Game" (host-only, below) is the
+  // explicit, separate action that ends it for everyone — same split this
+  // codebase already uses consistently across its other games (VS Battle,
+  // Ping Pong, Rebus Round, etc.), rather than overloading one icon with
+  // two different meanings depending on who clicks it.
+  const handleClose = () => {
+    if (onClose) onClose();
+  };
+  const handleEndGame = () => {
+    if (isOver) return;
+    if (onEndGame) onEndGame();
     else if (onClose) onClose();
   };
 
@@ -712,30 +906,46 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
             </span>
           )}
         </div>
-        <button
-          onClick={endOrLeave}
-          title={isHostUser ? 'End game for everyone' : 'Leave game'}
-          className="text-slate-400 hover:text-white hover:bg-slate-800 p-1.5 rounded-lg transition-colors"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-2">
+          {isHostUser && !isOver && (
+            <button
+              onClick={handleEndGame}
+              title="End the game for everyone"
+              className="text-xs font-semibold text-red-400 hover:text-red-300 bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              End Game
+            </button>
+          )}
+          <button
+            onClick={handleClose}
+            title="Leave game"
+            className="text-slate-400 hover:text-white hover:bg-slate-800 p-1.5 rounded-lg transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
 
-      {/* Ships remaining bar */}
-      {(phase !== 'placement' || isOver) && (
-        <div className="shrink-0 flex items-center justify-center gap-8 px-4 py-1.5 bg-slate-900 border-b border-slate-800 text-xs text-slate-400">
-          <span>
-            <span className="text-cyan-400 font-semibold">You:</span>{' '}
-            {myShipsLeft} ship{myShipsLeft !== 1 ? 's' : ''} left
-          </span>
-          {opponent && (
+      {/* Players bar — always visible (placement through results), not just
+          combat, so both avatars are on screen for the whole match. */}
+      {opponent && (
+        <div className="shrink-0 flex items-center justify-center gap-4 sm:gap-8 px-4 py-1.5 bg-slate-900 border-b border-slate-800 text-xs text-slate-400">
+          <div className="flex items-center gap-1.5">
+            <PlayerAvatar username={me?.username} avatarUrl={me?.avatar_url} highlighted={phase === 'combat' && !isOver && isMyTurn} />
+            <span>
+              <span className="text-cyan-400 font-semibold">You:</span>{' '}
+              {myShipsLeft} ship{myShipsLeft !== 1 ? 's' : ''} left
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
             <span>
               <span className="text-red-400 font-semibold">{opponent.username}:</span>{' '}
               {oppShipsLeft} ship{oppShipsLeft !== 1 ? 's' : ''} left
             </span>
-          )}
+            <PlayerAvatar username={opponent.username} avatarUrl={opponent.avatar_url} highlighted={phase === 'combat' && !isOver && !isMyTurn} />
+          </div>
         </div>
       )}
 
@@ -807,7 +1017,10 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
                 </button>
 
                 <p className="text-slate-500 text-[11px] leading-snug">
-                  Click a ship, then a cell to place it. Re-click the same ship to move it.
+                  Select a ship, then tap a cell to place it — you'll stay on
+                  that ship until you pick another one. A placed, selected
+                  ship shows arrows next to it on the board (⟳ rotates) for
+                  quick adjustments.
                 </p>
 
                 <button
@@ -833,6 +1046,11 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
                   onCellHover={handleCellHover}
                   onLeave={handleCellLeave}
                   ghostShip={ghostShip}
+                  selectedPlacedCells={selectedPlacedShipEntry?.cells || null}
+                  nudgeValidity={nudgeValidity}
+                  canRotate={canRotateSelected}
+                  onNudge={handleNudge}
+                  onRotate={handleRotateSelected}
                 />
               </div>
             </div>

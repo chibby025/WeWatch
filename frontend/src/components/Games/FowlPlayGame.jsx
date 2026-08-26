@@ -29,6 +29,20 @@ const FOWL_PLAY_ORIGIN = 'https://letswatchout.b-cdn.net';
 // v1/v2 abandoned per this project's own BunnyCDN versioning convention (the
 // edge cache can get permanently stuck serving stale content after a
 // same-path re-upload, with no purge access in this environment).
+// Two later, wrapper-only fixes below (no new BunnyCDN bundle deploy — the
+// v5 game asset itself is untouched, still on the same path):
+//  - Merged the hot-seat tournament "waiting for your turn" branch into the
+//    live spectator view. registerRelayReceiver was already firing and
+//    correctly populating spectatorState the whole time (hooks run
+//    unconditionally before any early return) — the render logic just never
+//    read it in tournament mode, so neither ordinary room members nor the
+//    player up next ever saw the live game, only a static placeholder.
+//  - Added the scene's background scenery (SceneSprite/SCENE_LAYOUT below) —
+//    the real duckhunt.js bundle sets a full-width ground/foliage strip and
+//    one tree exactly once, in its own _setStage(), never touched per-frame
+//    (confirmed by reading the deployed bundle directly). Nothing ever
+//    relayed or rendered them for spectators, so the scene looked bare —
+//    ducks and the dog floating over a flat sky gradient with no ground.
 const FOWL_PLAY_BASE = `${FOWL_PLAY_ORIGIN}/games/fowl-play/v5`;
 const FOWL_PLAY_URL = `${FOWL_PLAY_BASE}/index.html`;
 const SPRITES_PNG_URL = `${FOWL_PLAY_BASE}/sprites.png`;
@@ -91,6 +105,51 @@ function DogSprite({ dog, spriteMeta }) {
         imageRendering: 'pixelated',
         pointerEvents: 'none',
         zIndex: 5,
+      }}
+    />
+  );
+}
+
+// The scene's background scenery (a full-width ground/foliage strip + one
+// tree) — real elements in the game's own 800x600 canvas, from the SAME
+// sprite atlas ducks/dog already use, but 100% static: the real game sets
+// their position exactly once, in its own _setStage() (never touched again
+// per-frame — confirmed by reading the deployed duckhunt.js bundle
+// directly, not assumed). That's why the spectator view never showed them
+// before this fix — there was nothing per-frame to relay, and nobody ever
+// added a fixed render for them either, so they were just silently absent.
+// left/top below are the exact values duckhunt.js's own _setStage() uses
+// (foliage's sprite trim offsets it to y=417; tree sits at (100,237)),
+// expressed as fractions of the 800x600 base canvas — the same 0-1
+// coordinate space duck.x/duck.y already use for POSITION. Matching
+// DuckSprite/DogSprite's own established convention, the sprite itself
+// renders at its native atlas pixel size (frame.w/frame.h) rather than
+// being stretched to a percentage size — these two frames already happen to
+// be unscaled 1:1 crops of the real canvas, so native size is correct here,
+// not just simplest.
+const SCENE_LAYOUT = {
+  back: { left: 0, top: 417 / 600 },
+  tree: { left: 100 / 800, top: 237 / 600 },
+};
+
+function SceneSprite({ layoutKey, spriteMeta }) {
+  const info = spriteFrameInfo(spriteMeta, `scene/${layoutKey}/0.png`);
+  if (!info) return null;
+  const { frame, size } = info;
+  const layout = SCENE_LAYOUT[layoutKey];
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${layout.left * 100}%`,
+        top: `${layout.top * 100}%`,
+        width: frame.w,
+        height: frame.h,
+        backgroundImage: `url(${SPRITES_PNG_URL})`,
+        backgroundPosition: `-${frame.x}px -${frame.y}px`,
+        backgroundSize: `${size.w}px ${size.h}px`,
+        imageRendering: 'pixelated',
+        pointerEvents: 'none',
       }}
     />
   );
@@ -189,6 +248,19 @@ export default function FowlPlayGame({
     return () => registerRelayReceiver(null);
   }, [registerRelayReceiver, isHost]);
 
+  // Spectator: clear the relayed snapshot on every turn change, so a new
+  // player's opening moments don't briefly show the previous player's last
+  // duck positions/score before their own fresh fowlplay:sprites/state
+  // relay arrives. Solo (non-tournament) mode never re-fires this — its
+  // dependency stays undefined for the whole game — so this is a pure no-op
+  // there beyond the initial mount.
+  useEffect(() => {
+    setSpectatorState(null);
+    setSpriteMeta(null);
+    setShotFlash(false);
+    lastShotSeqRef.current = null;
+  }, [hotSeatTournament?.current_player_id]);
+
   // Spectator: a brief flash overlay each time the host's shotSeq counter
   // changes — a stylized "someone just fired" indicator, not a
   // frame-accurate reproduction of the real 60ms in-game flash (which
@@ -229,42 +301,44 @@ export default function FowlPlayGame({
     onClose?.();
   };
 
-  // ─── Non-host, hot-seat tournament: waiting for your turn ───────────────────
-  // Unchanged — scope for the live spectator view below is deliberately the
-  // simple non-tournament case only (tournament turn-passing semantics
-  // aren't fully clear from the frontend alone, and weren't part of what was
-  // asked).
-  if (!isHost && isInTournament) {
-    const currentPlayerName = hotSeatTournament?.current_player_name ?? 'someone';
-    return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white">
-        <span className="text-6xl">🦆</span>
-        <p className="text-lg font-semibold">
-          {currentPlayerName}'s turn — Fowl Play
-        </p>
-        <p className="text-sm text-gray-400">
-          Stand by for your turn…
-        </p>
-        <button
-          onClick={onClose}
-          className="mt-2 px-5 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors"
-        >
-          Close
-        </button>
-      </div>
-    );
-  }
-
-  // ─── Non-host, simple spectating: live view driven by relayed state ────────
+  // ─── Non-host: live spectator view, both plain spectating AND hot-seat
+  //     tournament mode ──────────────────────────────────────────────────
+  // Previously, tournament mode showed a static "so-and-so's turn" card
+  // instead of this — registerRelayReceiver was already firing and
+  // correctly populating spectatorState/spriteMeta the whole time (hooks
+  // run unconditionally before any early return), the render logic below
+  // just never read them in that branch. That's the actual bug this fixes:
+  // neither ordinary room members NOR the player who's up next ever saw the
+  // live game, regardless of how correctly the relay itself was working.
+  // Both cases now share one real view; the only difference is an added
+  // "whose turn" banner + a tournament-appropriate footer when isInTournament.
   if (!isHost) {
     const ducks = spectatorState?.ducks ?? [];
     const dog = spectatorState?.dog;
+    const currentPlayerName = hotSeatTournament?.current_player_name ?? 'someone';
+    // A room member watching a tournament isn't necessarily a participant in
+    // it (anyone in the room sees this overlay once a hot-seat game is
+    // active, same as every other broadcast game) — "you're up soon" would
+    // be wrong for a genuine bystander who was never in the rotation, same
+    // shape (participants[].user_id) already used for isEliminated below.
+    const isParticipant = hotSeatTournament?.participants?.some(
+      (p) => p.user_id === currentUserId
+    );
     return (
       <div
         className="fixed inset-0 z-50 flex flex-col text-white"
         style={{ background: 'linear-gradient(180deg, #64b0ff 0%, #a8d4ff 100%)' }}
       >
         <div className="relative flex-1 overflow-hidden">
+          {/* Background scenery — tree first, then the ground/foliage strip
+              on top of it, matching the real game's own _setStage() addChild
+              order exactly. Gated on spriteMeta alone (not spectatorState),
+              so it appears the instant sprites load, before the very first
+              live position snapshot arrives — a spectator sees the scene
+              immediately instead of a flat sky gradient. */}
+          <SceneSprite layoutKey="tree" spriteMeta={spriteMeta} />
+          <SceneSprite layoutKey="back" spriteMeta={spriteMeta} />
+
           {!spectatorState && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/40">
               <div className="w-8 h-8 rounded-full border-2 border-white/30 border-t-white animate-spin" />
@@ -300,10 +374,22 @@ export default function FowlPlayGame({
               {spectatorState.gameStatus}
             </div>
           )}
+
+          {isInTournament && (
+            <div className="absolute top-3 right-3 bg-purple-700/80 rounded-lg px-3 py-1.5 text-xs font-semibold">
+              🏆 {currentPlayerName}'s turn
+            </div>
+          )}
         </div>
 
         <div className="shrink-0 flex items-center justify-between px-4 py-2 bg-black/40">
-          <p className="text-xs text-gray-200">🦆 Watching Fowl Play — sit back and cheer them on.</p>
+          <p className="text-xs text-gray-200">
+            {isInTournament
+              ? isParticipant
+                ? `🦆 Watching ${currentPlayerName} play Fowl Play — you're up soon!`
+                : `🦆 Watching ${currentPlayerName} play Fowl Play.`
+              : '🦆 Watching Fowl Play — sit back and cheer them on.'}
+          </p>
           <button
             onClick={onClose}
             className="px-4 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors"
