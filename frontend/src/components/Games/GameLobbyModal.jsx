@@ -264,6 +264,88 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
+  {
+    id: 'dominoes',
+    name: 'Dominoes',
+    description: 'Match the open ends of the chain — first to empty your hand wins!',
+    minPlayers: 2,
+    maxPlayers: 4,
+    image: `${GAME_POSTERS_BASE_URL}/dominoes.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'darts',
+    name: 'Darts',
+    description: 'Aim, charge your power, and release — 3 darts a turn, highest score after 3 rounds wins!',
+    minPlayers: 2,
+    maxPlayers: 6,
+    image: `${GAME_POSTERS_BASE_URL}/darts.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'bowling',
+    name: 'Bowling',
+    description: 'Real physics 10-pin bowling — drag to aim, flick to roll. Official scoring: strikes, spares, and the 10th-frame bonus rolls.',
+    minPlayers: 2,
+    maxPlayers: 6,
+    image: `${GAME_POSTERS_BASE_URL}/bowling.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'basketball',
+    name: 'Basketball H.O.R.S.E',
+    description: 'Sink a shot and everyone else must match it — miss the match and you earn a letter. Spell H-O-R-S-E and you\'re out. Last one standing wins.',
+    minPlayers: 2,
+    maxPlayers: 6,
+    image: `${GAME_POSTERS_BASE_URL}/basketball.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'archery',
+    name: 'Archery Battle',
+    description: 'Aim, charge your power, and release — but watch the wind! 3 arrows a turn, highest score after 3 rounds wins.',
+    minPlayers: 2,
+    maxPlayers: 6,
+    image: `${GAME_POSTERS_BASE_URL}/archery.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'curling',
+    name: 'Curling',
+    description: 'Slide your stones toward the house — closest stone(s) to the button win the end. Best score after 4 ends wins the match.',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/curling.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'slice_frenzy',
+    name: 'Slice Frenzy',
+    description: 'Swipe to slice flying fruit before it falls — chain combos for bonus points, but never slice a bomb! Solo or hot-seat tournament.',
+    minPlayers: 1,
+    maxPlayers: 1,
+    image: `${GAME_POSTERS_BASE_URL}/slice_frenzy.webp`,
+    disabled: false,
+    type: 'arcade',
+    heavy: false
+  },
+  {
+    id: 'skeeball',
+    name: 'Skeeball',
+    description: 'Line up your roll, charge your weight, and land in the highest-scoring ring — 9 balls, best total wins. Solo or hot-seat tournament.',
+    minPlayers: 1,
+    maxPlayers: 1,
+    image: `${GAME_POSTERS_BASE_URL}/skeeball.webp`,
+    disabled: false,
+    type: 'arcade',
+    heavy: false
+  },
   // ramp_rush temporarily removed — not enough time to finish/fix it
   // {
   //   id: 'ramp_rush',
@@ -516,11 +598,11 @@ if (typeof window !== 'undefined') {
 // Games eligible for tournament mode: 2-player, head-to-head games where a
 // single-elimination "winner advances" bracket makes sense. N-player party games
 // (draw_guess, typing_race, trivia, etc.) are excluded.
-const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon']; // ramp_rush removed here too — temporarily disabled
+const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon', 'dominoes', 'darts', 'bowling', 'basketball', 'archery', 'curling']; // ramp_rush removed here too — temporarily disabled
 // Hot-seat tournament: each player takes a solo turn; highest score wins
 // (golf is the one exception — lower stroke count wins, handled entirely
 // backend-side via lowerScoreWinsGameTypes in websocket_handler.go).
-const HOT_SEAT_GAME_IDS = ['fowl_play', 'toad_ball', 'golf', 'rhythm_hero'];
+const HOT_SEAT_GAME_IDS = ['fowl_play', 'toad_ball', 'golf', 'rhythm_hero', 'slice_frenzy', 'skeeball'];
 
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 

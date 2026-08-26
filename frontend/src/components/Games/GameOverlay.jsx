@@ -9,6 +9,12 @@ import FourFramesGame from './FourFramesGame';
 import OthelloGame from './OthelloGame';
 import CheckersGame from './CheckersGame';
 import CrazyEightsGame from './CrazyEightsGame';
+import DominoesGame from './DominoesGame';
+import DartsGame from './DartsGame';
+import BowlingGame from './BowlingGame';
+import BasketballGame from './BasketballGame';
+import ArcheryGame from './ArcheryGame';
+import CurlingGame from './CurlingGame';
 import LudoGame from './LudoGame';
 import ConnectFourGame from './ConnectFourGame';
 import WouldYouRatherGame from './WouldYouRatherGame';
@@ -41,6 +47,8 @@ const SpaceAttackGame = lazy(() => import('./SpaceAttackGame'));
 const ToadBallGame = lazy(() => import('./ToadBallGame'));
 const RhythmHeroGame = lazy(() => import('./RhythmHeroGame'));
 const GolfGame = lazy(() => import('./GolfGame'));
+const SliceFrenzyGame = lazy(() => import('./SliceFrenzyGame'));
+const SkeeballGame = lazy(() => import('./SkeeballGame'));
 const ObbyParkourGame = lazy(() => import('./ObbyParkourGame'));
 // const MicroRacingGame = lazy(() => import('./MicroRacingGame')); // temporarily removed
 // const RampRushGame = lazy(() => import('./RampRushGame')); // temporarily removed
@@ -176,6 +184,85 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, session
           players={activeGame.players}
           currentUserId={currentUserId}
           myHand={myHand}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'dominoes':
+      return (
+        <DominoesGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          myHand={myHand}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'darts':
+      return (
+        <DartsGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'bowling':
+      return (
+        <BowlingGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'basketball':
+      return (
+        <BasketballGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'archery':
+      return (
+        <ArcheryGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'curling':
+      return (
+        <CurlingGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
@@ -738,6 +825,41 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, session
             onTournamentScore={onTournamentScore}
             onRelayPacket={onRelayPacket}
             registerRelayReceiver={registerRelayReceiver}
+          />
+        </Suspense>
+      );
+
+    case 'slice_frenzy':
+      // Arcade: single-player or hot-seat tournament — same self-contained
+      // 2D canvas pattern as toad_ball, no server-side move logic and no
+      // live spectator relay (a plain static "someone's playing" placeholder
+      // is shown to non-playing members instead, same as space_attack).
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <SliceFrenzyGame
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
+            hotSeatTournament={hotSeatTournament}
+            currentUserId={currentUserId}
+            onTournamentScore={onTournamentScore}
+          />
+        </Suspense>
+      );
+
+    case 'skeeball':
+      // Arcade: single-player or hot-seat tournament — same shape as
+      // slice_frenzy (self-contained canvas gameplay, no server move logic,
+      // no live spectator relay).
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <SkeeballGame
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
+            hotSeatTournament={hotSeatTournament}
+            currentUserId={currentUserId}
+            onTournamentScore={onTournamentScore}
           />
         </Suspense>
       );

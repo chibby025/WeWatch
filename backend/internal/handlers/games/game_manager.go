@@ -18,15 +18,15 @@ type MessageHub interface{}
 
 // GameManager handles game session state and logic
 type GameManager struct {
-	db                *gorm.DB
-	activeGames       map[uint]*GameSessionState
-	roomActiveGames   map[uint]uint
-	mu                sync.RWMutex
-	hub               MessageHub
-	TournamentManager *TournamentManager
-	HotSeatManager    *HotSeatManager
-	disconnectTimers  sync.Map // key: userID (uint) → *time.Timer; pending forfeit grace timers
-	counterTimers     sync.Map // key: gameSessionID (uint) → *time.Timer; pending vs_battle counter-window auto-resolve timers
+	db                 *gorm.DB
+	activeGames        map[uint]*GameSessionState
+	roomActiveGames    map[uint]uint
+	mu                 sync.RWMutex
+	hub                MessageHub
+	TournamentManager  *TournamentManager
+	HotSeatManager     *HotSeatManager
+	disconnectTimers   sync.Map // key: userID (uint) → *time.Timer; pending forfeit grace timers
+	counterTimers      sync.Map // key: gameSessionID (uint) → *time.Timer; pending vs_battle counter-window auto-resolve timers
 	fourFramesPrefetch sync.Map // key: "gameSessionID:roundIdx" (string) → fourFramesPrefetchResult; background-fetched next-round photos, consumed once by four_frames_start (see prefetchFourFramesRound in four_frames.go)
 }
 
@@ -146,6 +146,14 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		// "micro_racing": true, // temporarily removed
 		"obby_parkour": true,
 		"rhythm_hero":  true,
+		"dominoes":     true,
+		"darts":        true,
+		"bowling":      true,
+		"basketball":   true,
+		"archery":      true,
+		"curling":      true,
+		"slice_frenzy": true,
+		"skeeball":     true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -185,6 +193,38 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 	}
 	if gameType == "texas_holdem" && (len(players) < 2 || len(players) > 8) {
 		return nil, fmt.Errorf("texas hold'em supports 2-8 players")
+	}
+	// A double-six set (28 tiles, 7 dealt per player) only comfortably covers
+	// 2-4 players — same reasoning as wordsmith's/mancala's own caps above.
+	if gameType == "dominoes" && (len(players) < 2 || len(players) > 4) {
+		return nil, fmt.Errorf("dominoes supports 2-4 players")
+	}
+	// Standard casual darts party format — same reasoning as other games'
+	// player-count caps above.
+	if gameType == "darts" && (len(players) < 2 || len(players) > 6) {
+		return nil, fmt.Errorf("darts supports 2-6 players")
+	}
+	// A real 10-frame bowling game already takes a while solo — same casual
+	// party-format cap as darts.
+	if gameType == "bowling" && (len(players) < 2 || len(players) > 6) {
+		return nil, fmt.Errorf("bowling supports 2-6 players")
+	}
+	// H.O.R.S.E needs at least 2 to have anyone to challenge; capped at 6 for
+	// the same casual party-format reasoning as darts/bowling above — a real
+	// game of H.O.R.S.E with more than a handful of players gets tedious
+	// waiting through everyone's attempt queue.
+	if gameType == "basketball" && (len(players) < 2 || len(players) > 6) {
+		return nil, fmt.Errorf("basketball supports 2-6 players")
+	}
+	// Same casual party-format cap as darts/bowling/basketball above.
+	if gameType == "archery" && (len(players) < 2 || len(players) > 6) {
+		return nil, fmt.Errorf("archery supports 2-6 players")
+	}
+	// Real curling is always a head-to-head sport, and curlingResolveEnd's
+	// own closest-stone-wins-the-end rule only makes sense for exactly two
+	// competitors — same hard 2-player requirement as Mancala/Backgammon.
+	if gameType == "curling" && len(players) != 2 {
+		return nil, fmt.Errorf("curling is a 2-player game")
 	}
 	// ramp_rush temporarily removed (see validGameTypes above) — this check is
 	// now unreachable but left in place for when it's re-enabled.
@@ -226,6 +266,9 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		gameState.GameSession.GameState = gameState.GameData
 	case "whot":
 		dealWhot(gameState)
+		gameState.GameSession.GameState = gameState.GameData
+	case "dominoes":
+		dealDominoes(gameState)
 		gameState.GameSession.GameState = gameState.GameData
 	case "blackjack":
 		dealBlackjack(gameState)
@@ -427,6 +470,18 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processPoolMove(gameState, playerID, moveType, moveData)
 	case "whot":
 		gameOver, winnerID, err = gm.processWhotMove(gameState, playerID, moveType, moveData)
+	case "dominoes":
+		gameOver, winnerID, err = gm.processDominoesMove(gameState, playerID, moveType, moveData)
+	case "darts":
+		gameOver, winnerID, err = gm.processDartsMove(gameState, playerID, moveType, moveData)
+	case "bowling":
+		gameOver, winnerID, err = gm.processBowlingMove(gameState, playerID, moveType, moveData)
+	case "basketball":
+		gameOver, winnerID, err = gm.processBasketballMove(gameState, playerID, moveType, moveData)
+	case "archery":
+		gameOver, winnerID, err = gm.processArcheryMove(gameState, playerID, moveType, moveData)
+	case "curling":
+		gameOver, winnerID, err = gm.processCurlingMove(gameState, playerID, moveType, moveData)
 	case "hangman":
 		gameOver, winnerID, err = gm.processHangmanMove(gameState, playerID, moveData)
 	case "glass_bridge":
@@ -447,6 +502,12 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 	case "toad_ball":
 		// Self-contained canvas arcade game — score is reported client-side via
 		// record_hot_seat_score for tournament mode; no server-side move logic needed
+		gameOver, winnerID, err = false, nil, nil
+	case "slice_frenzy":
+		// Same as toad_ball — pure client-side canvas arcade, no server logic needed
+		gameOver, winnerID, err = false, nil, nil
+	case "skeeball":
+		// Same as toad_ball — pure client-side canvas arcade, no server logic needed
 		gameOver, winnerID, err = false, nil, nil
 	case "rhythm_hero":
 		// Self-contained Three.js canvas arcade game (note-highway rhythm game) —
@@ -517,6 +578,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"backgammon":          true, // roll → move(s) → (auto-)pass; turn only advances when the backend decides dice are exhausted/unusable
 		"property_tycoon":     true, // roll → land/resolve → (auto-)advance; doubles grant another roll, a pending buy/decline defers the advance
 		"texas_holdem":        true, // action_on is managed directly (skips folded/all-in/busted players, reopens on a raise); never a simple +1 mod N
+		"bowling":             true, // players finish their own 10 frames at very different paces (strikes finish faster) — bowlingAdvanceToNextActivePlayer skips anyone already done, a plain +1 mod N can't
+		"basketball":          true, // a made free shot routes the turn through the whole attempt-queue of challengers before returning to the setter, and eliminated players must be skipped — none of that is a plain +1 mod N
 		// "ramp_rush":        true, // temporarily removed — round resolution (both players must launch before advancing) manages CurrentTurn directly
 	}
 	if !gameOver && !selfManagedTurn[gameState.GameSession.GameType] {

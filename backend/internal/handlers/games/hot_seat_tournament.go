@@ -901,14 +901,18 @@ func (hm *HotSeatManager) payloadLocked(t *HotSeatTournament) map[string]interfa
 	}
 	// current_player_id/current_player_name are also broadcast separately via
 	// hot_seat_turn (broadcastTurnLocked/broadcastBracketTurnLocked), sent
-	// moments after this payload at tournament creation/advancement. The two
-	// messages have no guaranteed relative delivery order (Hub.broadcastToRoom
-	// is drained by two concurrent worker goroutines racing to dequeue — see
-	// the comment on Hub.startBroadcastWorkers' fan-out loop), so this update
-	// could be delivered to a client AFTER the turn broadcast it was actually
-	// sent before. Including these fields directly here means that ordering
-	// no longer matters — a client that does a full-state replace on receipt
-	// of this message never loses what hot_seat_turn had just set.
+	// moments after this payload at tournament creation/advancement. This used
+	// to be a real concern — h.broadcastToRoom was, at the time this comment
+	// was first written, drained by two concurrent worker goroutines racing to
+	// dequeue (see websocket.go's Hub.Run(), where that redundant second
+	// consumer has since been removed entirely — it was the confirmed root
+	// cause of a real, reported ordering bug elsewhere), so this update could
+	// have been delivered to a client after the turn broadcast it was actually
+	// sent before. Delivery order for a single client is now guaranteed FIFO
+	// via Hub.Run() being the sole consumer of that channel — but these fields
+	// are left duplicated here regardless, since a client doing a full-state
+	// replace on receipt of this message losing nothing either way is free
+	// redundancy, not a correctness requirement anymore.
 	if id, name, ok := hotSeatCurrentPlayerLocked(t); ok {
 		payload["current_player_id"] = id
 		payload["current_player_name"] = name

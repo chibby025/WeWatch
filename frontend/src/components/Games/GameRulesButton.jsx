@@ -63,6 +63,83 @@ const RULES = {
       'First player to empty their hand wins!',
     ],
   },
+  dominoes: {
+    title: 'Dominoes',
+    rules: [
+      'Everyone starts with 7 tiles. Whoever holds the highest double (e.g. 6-6) opens the board with it.',
+      'On your turn, play a tile matching either open end of the chain — the matching number touches, the other number becomes the new end.',
+      'If you have no playable tile, draw from the boneyard until you do (or it runs out).',
+      'If the boneyard is empty and you still can\'t play, you must pass.',
+      'First to empty their hand wins instantly ("domino!"). If everyone gets stuck and the boneyard is empty, whoever holds the fewest total pips wins.',
+    ],
+  },
+  darts: {
+    title: 'Darts',
+    rules: [
+      'Drag anywhere on the board to aim — the label shows what you\'d score if you threw perfectly right now.',
+      'Hold the throw button to charge power, then release — a well-timed release lands close to your aim; a poorly-timed one wobbles further off it.',
+      'Each turn is 3 darts. After 3 full rounds (9 darts each), highest total score wins.',
+      'Standard dartboard scoring: singles, doubles (2x) and triples (3x) rings, outer bull (25), and bullseye (50).',
+    ],
+  },
+  bowling: {
+    title: 'Bowling',
+    rules: [
+      'On your turn, drag the ball left/right to line up your shot, then flick it forward toward the pins — the speed and direction of your flick control the roll.',
+      'A frame is 2 rolls (unless you strike on the first). 10 frames per game, real official scoring: a strike or spare earns bonus points from your next roll(s).',
+      'The 10th frame gives you a bonus roll if you strike or spare — a perfect game (12 strikes in a row) scores 300.',
+      'Highest total score after everyone finishes all 10 frames wins.',
+    ],
+  },
+  basketball: {
+    title: 'Basketball H.O.R.S.E',
+    rules: [
+      'On a free shot, pick a distance (Layup to Three-Pointer), then hold the shoot button to charge power and release — the timing controls your accuracy.',
+      'Sink a free shot and everyone else must attempt to match it from the exact same distance — you don\'t get to choose theirs, only your own power/timing.',
+      'Miss a match attempt and you earn the next letter of H-O-R-S-E. Spell the whole word and you\'re eliminated.',
+      'Keep making your own free shots and you stay "hot" — the turn only moves on once you miss your own shot.',
+      'Last player who hasn\'t spelled HORSE wins.',
+    ],
+  },
+  archery: {
+    title: 'Archery Battle',
+    rules: [
+      'Drag anywhere on the target to aim — the label shows what you\'d score if you released right now.',
+      'Watch the wind indicator before you shoot — it pushes every arrow sideways, so aim to compensate for it.',
+      'Hold the shoot button to charge power, then release — good timing lands close to your aim; poor timing wobbles it further off.',
+      'Each turn is 3 arrows. After 3 full rounds (9 arrows each), highest total score wins.',
+      'Real 10-ring target scoring: dead center (gold) is worth 10, the outer white ring is worth 1.',
+    ],
+  },
+  curling: {
+    title: 'Curling',
+    rules: [
+      'Drag anywhere on the house to aim, then hold the throw button to charge weight and release — good timing lands your stone close to your aim.',
+      'Each end, both players alternate throwing 4 stones each at the same house.',
+      'Once all 8 stones are down, whoever\'s single closest stone to the button beats the opponent\'s best stone wins the end — scoring 1 point for EVERY one of their own stones that also beats the opponent\'s best.',
+      'After 4 ends, highest total score wins.',
+    ],
+  },
+  slice_frenzy: {
+    title: 'Slice Frenzy',
+    rules: [
+      'Fruit is launched into the air one after another — swipe across it with your mouse or finger to slice it before it falls.',
+      'Slicing multiple pieces in one swipe, or in quick succession, builds a combo for bonus points.',
+      'Watch out for bombs — slicing one costs you a life instead of points!',
+      'Missing a fruit (letting it fall unsliced) also costs a life.',
+      'You have 3 lives. Score as much as you can before running out — play solo, or as a hot-seat tournament for the highest score.',
+    ],
+  },
+  skeeball: {
+    title: 'Skeeball',
+    rules: [
+      'Drag left/right to line up your roll, then hold the roll button to charge weight and release.',
+      'Timing your release near the ideal weight (the white marker on the charge bar) sends the ball straight and true into the highest-scoring rings.',
+      'Too little weight and the ball falls short; too much and it overshoots into the gutter — both score 0 for that ball.',
+      'You get 9 balls per game — total score across all 9 is your final result.',
+      'Play solo, or as a hot-seat tournament for the highest total score.',
+    ],
+  },
   ludo: {
     title: 'Ludo',
     rules: [

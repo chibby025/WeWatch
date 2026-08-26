@@ -481,82 +481,6 @@ func (h *Hub) CheckHostDisconnectTimers() {
 }
 */
 
-// Start broadcast worker goroutines for the Hub. Processes room/user broadcasts and fans out to clients.
-func (h *Hub) startBroadcastWorkers() {
-    // Room broadcast worker
-    go func() {
-        defer func() {
-            if r := recover(); r != nil {
-                log.Printf("⚠️ [Hub] Recovered from panic in broadcast worker: %v", r)
-            }
-        }()
-        
-        for msg := range h.broadcastToRoom {
-            roomID := msg.roomID
-            data := msg.data
-            h.mutex.RLock()
-            clients := h.rooms[roomID]
-            h.mutex.RUnlock()
-
-            if clients == nil || len(clients) == 0 {
-                // nothing to do
-                continue
-            }
-
-            // Fan-out non-blocking to each client
-            for c := range clients {
-                // Exclude the sender if provided — this worker and Hub.Run()'s own
-                // broadcastToRoom select-case (below) both consume the same channel
-                // concurrently; a message only ever reaches ONE of them (Go channel
-                // semantics), so both must honor sender/excludeUserID identically or
-                // whichever one happens to win the race silently drops the exclusion.
-                // Found via a real Rhythm Hero live-broadcast test that caught the
-                // active player receiving an echo of their own performance.
-                if msg.sender != nil && c == msg.sender {
-                    continue
-                }
-                if msg.excludeUserID != 0 && c.userID == msg.excludeUserID {
-                    continue
-                }
-                // ✅ Check if channel is closed before sending
-                func() {
-                    defer func() {
-                        if r := recover(); r != nil {
-                            log.Printf("⚠️ [Hub] Recovered from panic sending to user %d: %v", c.userID, r)
-                        }
-                    }()
-
-                    select {
-                    case c.send <- data:
-                        // enqueued ok
-                    default:
-                        log.Printf("[Hub] drop outgoing to user %d in room %d (send buffer full)", c.userID, roomID)
-                    }
-                }() // ✅ Close anonymous function
-            }
-        }
-    }()
-
-    // User-targeted broadcast worker (for BroadcastToUsers)
-    // Uses clientRegistry for O(1) lookup per user instead of scanning all rooms.
-    go func() {
-        for msg := range h.broadcastToUsers {
-            h.registryMutex.RLock()
-            for _, uid := range msg.userIDs {
-                if roomMap, ok := h.clientRegistry[uid]; ok {
-                    for _, c := range roomMap {
-                        select {
-                        case c.send <- msg.data:
-                        default:
-                            log.Printf("[Hub] drop outgoing to user %d (send buffer full)", uid)
-                        }
-                    }
-                }
-            }
-            h.registryMutex.RUnlock()
-        }
-    }()
-}
 
 func (h *Hub) GetUserIDsInRow(roomID uint, row int) []uint {
     h.seatingMutex.RLock()
@@ -1530,6 +1454,33 @@ func (h *Hub) Run() {
 			}
 			h.mutex.RUnlock()
 
+		// This case (and the h.broadcastToUsers one below) is the ONLY place
+		// h.broadcastToRoom is ever drained. It previously had a second,
+		// independent consumer — a "worker" goroutine started by the
+		// now-removed Hub.startBroadcastWorkers(), running `for msg := range
+		// h.broadcastToRoom` in parallel with this select loop. A Go channel
+		// hands each message to exactly one waiting receiver with zero
+		// ordering guarantee about *which* one, so two back-to-back
+		// broadcasts for the same room (e.g. Pool's shot_progress/game_event
+		// live-relay ticks a few ms apart during a single shot) could be
+		// picked up by the two different goroutines and delivered to a
+		// client's own c.send channel out of order — a strictly newer
+		// game_state_update silently clobbered by a stale one that happened
+		// to finish its own per-client fan-out loop first. Confirmed as the
+		// root cause of a real, reported bug: "sometimes it works, sometimes
+		// the player whose turn it is can't act" — VideoWatch.jsx's
+		// game_state_update handler only guards against CROSS-session
+		// staleness (a mismatched game_session_id), never within-session
+		// reordering, so a clobbered current_turn/ball_positions silently
+		// stuck a client showing the wrong player as active. The dual-worker
+		// setup's earlier fix only made both consumers honor
+		// sender/excludeUserID identically (closing a self-echo symptom) —
+		// it never addressed this deeper ordering race. Do not reintroduce a
+		// second consumer of this channel for throughput reasons: every room
+		// here is small (~42 seats max, per the app's own Overfill design),
+		// so this loop's per-client fan-out was never a genuine bottleneck —
+		// correctness matters far more than the marginal parallelism a
+		// second consumer would unsafely buy back.
 		case roomBroadcast := <-h.broadcastToRoom:
 			h.mutex.RLock()
 			roomClients, ok := h.rooms[roomBroadcast.roomID]
@@ -1563,6 +1514,8 @@ func (h *Hub) Run() {
 			}
 			h.mutex.RUnlock()
 
+		// Same "sole consumer" invariant as h.broadcastToRoom above — see that
+		// case's comment for the full reasoning.
 		case userBroadcast := <-h.broadcastToUsers:
 			h.mutex.RLock()
 			for _, targetRoomClients := range h.rooms { // Iterate through all rooms
@@ -2763,8 +2716,13 @@ func InitializeHub() {
         gameWebSocketHandler = games.NewGameWebSocketHandler(DB, hub)
         log.Println("✅ Game WebSocket handler initialized")
         go hub.Run()
-        hub.startBroadcastWorkers()
-        
+        // Hub.Run()'s own select loop is the SOLE consumer of h.broadcastToRoom
+        // and h.broadcastToUsers — see the comment on those two cases inside
+        // Run() for why a second, previously-existing set of worker goroutines
+        // reading the same channels was removed rather than kept for
+        // throughput. Do not reintroduce a parallel consumer for either
+        // channel without re-reading that comment first.
+
         // ⚠️ DISABLED: Host disconnect auto-end checker
         /*
         go func() {

@@ -29,6 +29,14 @@ const GAME_LABELS = {
   golf: 'Mini Golf',
   rhythm_hero: 'Rhythm Hero',
   pool: '8-Ball Pool',
+  dominoes: 'Dominoes',
+  darts: 'Darts',
+  bowling: 'Bowling',
+  basketball: 'Basketball H.O.R.S.E',
+  archery: 'Archery Battle',
+  curling: 'Curling',
+  slice_frenzy: 'Slice Frenzy',
+  skeeball: 'Skeeball',
 };
 
 /**
