@@ -122,6 +122,88 @@ function SessionEndedOverlay({ reason, onReturn }) {
 
 const PREVIEW_INTERVAL = import.meta.env.DEV ? 60_000 : 300_000;
 
+// High-frequency, purely-mechanical game relay move types (pool's view_ack/
+// shot_progress/game_event, and any future equivalent) are excluded from
+// handleGameMove's generic "Making move" log below — they're expected to
+// fire many times per second during ordinary, correctly-working gameplay
+// (a view_ack heartbeat, a live ball-position relay, a cue-aim stream), and
+// logging every one of them drowns out everything else in the console.
+// Games with a genuine per-move sync issue get their own purpose-built,
+// comparable log instead (see PoolGame.jsx's ball-position fingerprint log)
+// rather than relying on this generic one.
+const SILENT_MOVE_TYPES = new Set(['view_ack', 'shot_progress', 'game_event']);
+
+// Used by handleExportLogs (the "green logs" copy-to-clipboard button) to
+// filter window.capturedLogs down to what's actually useful for debugging —
+// see that function's own comment for the full design. Both lists are
+// substring-matched against the log's own rendered text, not the raw args.
+//
+// Every pattern below was confirmed, not guessed — pulled directly from a
+// real captured session where these exact lines fired repeatedly (several
+// times per second in places) with no new information on each repeat:
+// per-render recalculation dumps, connection-pool bookkeeping churn, and
+// verbose one-off debug instrumentation that was never cleaned up.
+const NOISY_LOG_PATTERNS = [
+  '[participantsWithCamera]',
+  '[CinemaVideoPlayer] Video element CSS',
+  'No banner ad available',
+  'Default audio device selected',
+  'Available audio devices',
+  '[useWebSocket] RAW session_status JSON',
+  '[useWebSocket] Parsed members array',
+  '[useWebSocket] Member 0',
+  '[useWebSocket] Effect TRIGGERED',
+  '[useWebSocket] Added connection to pool',
+  '[useWebSocket] REUSING existing connection',
+  'already subscribed, skipping duplicate',
+  '[Upload SW] Registered successfully',
+  '[GRAPHICS INIT]',
+  '[VideoWatch] LiveKit status',
+  'Checking for existing remote participants',
+  '[LiveKit Audio]',
+  'Video subscription initialized',
+  '[DEBUG] Video subscription cleanup',
+  '[RemoteAudioPlayer] Mic permission granted',
+  '[session_status] received',
+  'session_status: initialised',
+  'getRoomMembers:',
+  '[VideoWatch] Room data fetched',
+  // [RoomPageNew] wraps EVERY WS message it receives (not just game ones) in
+  // one verbose "message received: {type, hasData, fullMessage}" dump — most
+  // of its traffic (audio-state pings, camera/participant churn, media-state
+  // pings) has nothing to do with game/pool sync. Genuine game messages
+  // still survive this via VITAL_LOG_PATTERNS' game_started/game_state_update/
+  // game_ended entries, checked first — only the specific routine, non-game
+  // wrapped types below are actually dropped.
+  '"type":"broadcast_audio_state"',
+  '"type":"user_audio_state"',
+  '"type":"participant_join"',
+  '"type":"participant_leave"',
+  '"type":"media_state_changed"',
+  '"type":"session_member_joined"',
+  '"type":"request_playback_state"',
+  '"type":"game_lobby_browsing"',
+  '"type":"session_preview_updated"',
+];
+const VITAL_LOG_PATTERNS = [
+  '[Pool] board sync',
+  '[Pool] SHOT RESOLVED',
+  '[VideoWatch] Making move',
+  '[VideoWatch] Game started',
+  'game_started',
+  'game_state_update',
+  'game_ended',
+  'websocket closed',
+  'WebSocket connected to room',
+  'Max reconnection attempts',
+  'Connection error',
+  "Couldn't connect to server",
+  '[VideoWatch] Connection dropped while game',
+  '[VideoWatch] Reconnected after',
+  '[VideoWatch] Game state rehydrated',
+  '[GameLobbyModal]',
+];
+
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
   
@@ -732,17 +814,56 @@ export default function VideoWatch() {
   // 📱 Responsive state for LiveShare graphics
   const [screenSize, setScreenSize] = useState('desktop'); // 'mobile' | 'tablet' | 'desktop'
   
-  // 📋 Copy all captured logs to clipboard for sharing
+  // 📋 Copy captured logs to clipboard for sharing — filtered, not the raw
+  // firehose. window.capturedLogs intercepts EVERY console.log/warn/error/
+  // info app-wide indiscriminately (participant-camera recalculations, audio
+  // device enumeration, per-render CSS dumps, verbose useWebSocket internals
+  // — several of which repeat identically many times per second with zero
+  // new information each time). Reported directly: this drowns out the
+  // handful of lines that actually matter when debugging a specific issue
+  // (e.g. game state sync) via this exact button.
+  //
+  // NOISY_LOG_PATTERNS (module scope, below) is a denylist of KNOWN,
+  // confirmed-repetitive/low-value prefixes — dropped from `log`/`info`
+  // entries only. Never applied to `warn`/`error`, which are always kept
+  // regardless of content (a warning/error is never "just noise").
+  // VITAL_LOG_PATTERNS is an allowlist that overrides the denylist —
+  // anything matching it always survives, even if it would otherwise also
+  // match a noisy prefix. A log matching NEITHER list is kept by default —
+  // this can only get MORE aggressive about filtering known noise over
+  // time; it never silently hides something new/unrecognized that might
+  // turn out to matter.
   const handleExportLogs = useCallback(() => {
     const logs = (window.capturedLogs || []).slice(-2000);
     if (logs.length === 0) { toast.warn('No logs captured yet'); return; }
-    const text = logs.map(l => {
+    const withMsg = logs.map(l => ({
+      ...l,
+      msg: l.args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '),
+    }));
+    const filtered = withMsg.filter(l => {
+      if (l.type === 'warn' || l.type === 'error') return true;
+      // Hard exclusion, checked before either list: live_ball_positions only
+      // ever appears in pool's shot_progress relay (confirmed in pool.go —
+      // the field is deleted the instant a real "shot" resolves), so its
+      // presence deterministically means "routine physics tick", not a
+      // meaningful state transition. This is the field that was flooding a
+      // real capture with dozens of near-identical game_state_update dumps
+      // during a single shot — the generic game_state_update entry in
+      // VITAL_LOG_PATTERNS below is deliberately broad (it also needs to
+      // catch the one real, rare state_version-changing update), so this
+      // check has to run first to strip the noisy majority out from under it.
+      if (l.msg.includes('live_ball_positions')) return false;
+      if (VITAL_LOG_PATTERNS.some(p => l.msg.includes(p))) return true;
+      if (NOISY_LOG_PATTERNS.some(p => l.msg.includes(p))) return false;
+      return true;
+    });
+    const text = filtered.map(l => {
       const t = new Date(l.time).toISOString().slice(11, 23);
-      const msg = l.args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
-      return `[${t}] [${l.type.toUpperCase()}] ${msg}`;
+      return `[${t}] [${l.type.toUpperCase()}] ${l.msg}`;
     }).join('\n');
+    const droppedCount = logs.length - filtered.length;
     navigator.clipboard.writeText(text).then(
-      () => toast.success(`✅ Copied ${logs.length} logs to clipboard`),
+      () => toast.success(`✅ Copied ${filtered.length} logs to clipboard${droppedCount > 0 ? ` (${droppedCount} noisy lines filtered out)` : ''}`),
       () => toast.error('Failed to copy logs'),
     );
   }, []);
@@ -1114,6 +1235,32 @@ export default function VideoWatch() {
   // legitimate hand_update that happens to arrive before activeGame itself
   // has been updated. Never reset — it should only ever move forward.
   const latestGameSessionIdRef = useRef(null);
+
+  // Direct, unambiguous tracking for "did my connection drop while a game was
+  // active" — deliberately separate from useWebSocket's own generic
+  // reconnect logging, which doesn't know/say anything about game state.
+  // Answers the exact question a mid-game desync report needs answered
+  // first: was there a connection gap at all, and how long was it. wasConnectedRef
+  // avoids firing on the very first mount (isConnected starts false there
+  // too, but that's not a "drop").
+  const wasConnectedRef = useRef(isConnected);
+  const disconnectedAtRef = useRef(null);
+  useEffect(() => {
+    if (wasConnectedRef.current && !isConnected) {
+      disconnectedAtRef.current = Date.now();
+      if (activeGame) {
+        console.warn(`🔌 [VideoWatch] Connection dropped while game session ${activeGame.game_session_id} (${activeGame.game_type}) was active — turn ${activeGame.current_turn}`);
+      }
+    } else if (!wasConnectedRef.current && isConnected) {
+      const gapMs = disconnectedAtRef.current ? Date.now() - disconnectedAtRef.current : null;
+      if (gapMs != null) {
+        console.log(`🔌 [VideoWatch] Reconnected after ${gapMs}ms${activeGame ? ` — game session ${activeGame.game_session_id} should now rehydrate via game_started` : ''}`);
+      }
+      disconnectedAtRef.current = null;
+    }
+    wasConnectedRef.current = isConnected;
+  }, [isConnected, activeGame]);
+
   // Raw server-rejected-move error text + a bump key (so a textually-identical
   // rejection is still recognized as a fresh occurrence). Currently only
   // consumed by WordsmithGame's invalid-move banner — every other game keeps
@@ -2596,9 +2743,11 @@ export default function VideoWatch() {
       console.error('❌ [VideoWatch] sendMessage not available');
       return;
     }
-    
-    console.log('🎮 [VideoWatch] Making move:', moveData);
-    
+
+    if (!SILENT_MOVE_TYPES.has(moveData?.move_type)) {
+      console.log('🎮 [VideoWatch] Making move:', moveData);
+    }
+
     sendMessage({
       type: 'make_move',
       data: moveData
@@ -2607,14 +2756,22 @@ export default function VideoWatch() {
 
   const handleGameClose = useCallback(() => {
     console.log('🎮 [VideoWatch] Closing game');
-    // If host closes a completed/forfeited game, broadcast to all room members
-    // so everyone's overlay dismisses. Skip for in-progress games (those have
-    // their own end-game WS flow already).
+    // Host closing ALWAYS tells the backend, regardless of whether this game
+    // is already terminal — previously this only fired for an
+    // already-finished/forfeited/completed/ended game, meaning the host
+    // plainly closing an IN-PROGRESS game (any game with no dedicated "End
+    // Game" button of its own — Tank Battle/Bomberman had none at all) sent
+    // nothing to the backend whatsoever: gm.activeGames/gm.roomActiveGames
+    // stayed marked active forever, permanently blocking that room from
+    // starting any new game until the server itself restarted. The backend's
+    // handleCloseGame (websocket_handler.go) is now the one source of truth
+    // for this — it looks up whether the session is still genuinely active
+    // and forfeit-ends it first if so, and safely no-ops if it's already
+    // over (the normal case for this message, unchanged) — so it's correct
+    // to just always send this now rather than gating on activeGame.status
+    // here first.
     if (isHost && activeGame) {
-      const s = activeGame.status;
-      if (s === 'finished' || s === 'completed' || s === 'forfeited' || s === 'ended') {
-        sendMessage?.({ type: 'close_game', data: { game_type: activeGame.game_type } });
-      }
+      sendMessage?.({ type: 'close_game', data: { game_type: activeGame.game_type, game_session_id: activeGame.game_session_id } });
     }
     setActiveGame(null);
     setMyHand(null);
@@ -6204,7 +6361,22 @@ export default function VideoWatch() {
         case 'game': {
           const _gAction = message.action;
           if (_gAction === 'game_started') {
-            console.log('🎮 [VideoWatch] Game started:', message.data);
+            // This same message shape is used for two genuinely different
+            // events: a brand-new game starting, AND a reconnecting client's
+            // rehydration (GetActiveGameMessage, sent automatically on every
+            // WS (re)join — see websocket_handler.go). A dropped connection
+            // (WS close code 1006) mid-game reconnecting is exactly when the
+            // rehydration case fires. Distinguish them via
+            // latestGameSessionIdRef: a session id already seen means this
+            // is a resync of a game already in progress, not a fresh start.
+            const isRehydration = message.data.game_session_id != null
+              && latestGameSessionIdRef.current === message.data.game_session_id;
+            console.log(
+              isRehydration
+                ? `🔄 [VideoWatch] Game state rehydrated after reconnect (session ${message.data.game_session_id}, turn ${message.data.current_turn})`
+                : '🎮 [VideoWatch] Game started:',
+              message.data
+            );
             // A genuinely new game always has a higher game_session_id than
             // anything seen before (DB auto-increment) — see
             // latestGameSessionIdRef's own comment above.
@@ -6219,20 +6391,50 @@ export default function VideoWatch() {
                 || null;
               return { ...p, avatar: avatarUrl, avatar_url: avatarUrl };
             });
-            setActiveGame({
-              game_session_id: message.data.game_session_id,
-              game_type:       message.data.game_type,
-              host_id:         message.data.host_id,
-              status:          'active',
-              current_turn:    0,
-              players:         enrichedPlayers,
-              game_state:      message.data.game_state,
+            setActiveGame(prev => {
+              // Same ordering guard as game_state_update below, applied only
+              // for a REHYDRATION of an already-known session — see that
+              // handler's own comment for the full reconnect-race reasoning.
+              // A genuinely new game (isRehydration=false) always starts
+              // fresh and has nothing meaningful of its own to compare
+              // against, so the check is skipped entirely in that case.
+              if (isRehydration && prev && prev.game_session_id === message.data.game_session_id) {
+                const incomingVersion = message.data.game_state?.state_version;
+                const knownVersion = prev.game_state?.state_version;
+                if (incomingVersion != null && knownVersion != null && incomingVersion < knownVersion) {
+                  console.warn(`⚠️ [VideoWatch] Rejecting stale rehydration (incoming v${incomingVersion} < known v${knownVersion}) — likely an out-of-order message from a reconnect race`);
+                  return prev;
+                }
+              }
+              return {
+                game_session_id: message.data.game_session_id,
+                game_type:       message.data.game_type,
+                host_id:         message.data.host_id,
+                // CONFIRMED BUG, now fixed: this used to hardcode 0
+                // unconditionally. Correct for a genuinely new game
+                // (StartGame always initializes CurrentTurn=0) but silently
+                // wrong for a mid-game rehydration past turn 0 — the exact
+                // scenario a dropped/reconnecting WS produces. The backend
+                // now includes the real value; `?? 0` only covers a
+                // still-missing field on an older/uncached backend
+                // response, not the normal path.
+                status:          message.data.status ?? 'active',
+                current_turn:    message.data.current_turn ?? 0,
+                players:         enrichedPlayers,
+                game_state:      message.data.game_state,
+              };
             });
-            setIsLeftSidebarOpen(false);
-            toast.success(`${(message.data.game_type || '').replace(/_/g, ' ').toUpperCase()} started!`, {
-              duration: 3000,
-              icon: '🎮',
-            });
+            // A rehydration is a silent resync, not a user-facing "new game"
+            // event — showing another "STARTED!" toast and yanking the
+            // sidebar closed again every time a flaky connection reconnects
+            // mid-match would be its own (milder) bug.
+            if (!isRehydration) {
+              setIsLeftSidebarOpen(false);
+              toast.success(`${(message.data.game_type || '').replace(/_/g, ' ').toUpperCase()} started!`, {
+                duration: 3000,
+                icon: '🎮',
+              });
+            }
           }
           if (_gAction === 'game_state_update') {
             // A stale/late update arriving after the user already closed the game
@@ -6253,6 +6455,34 @@ export default function VideoWatch() {
             setActiveGame(prev => {
               if (!prev) return null;
               if (message.game_session_id != null && message.game_session_id !== prev.game_session_id) {
+                return prev;
+              }
+              // Ordering guard, confirmed necessary (not theoretical): every
+              // successful move — including a routine view_ack — triggers a
+              // full room-wide broadcast, and a reconnect (WS close code
+              // 1006, confirmed happening frequently in this app) means two
+              // connections can briefly overlap with no delivery-order
+              // guarantee across that overlap. A player who racks up several
+              // consecutive legal-pocket turns fires a burst of these
+              // broadcasts in a short window — exactly the window most
+              // likely to have the OTHER player's flaky connection reconnect
+              // mid-burst, letting a stale message arrive after a fresher
+              // one and silently clobber it (current_turn included —
+              // reproduced live as: the member's board freezes on the old
+              // turn indefinitely, or the member's client believes it's
+              // already their turn and their real move gets rejected
+              // "not your turn" because the backend disagrees).
+              // state_version (pool only, currently) is exactly the
+              // monotonic signal needed to catch this: reject only a
+              // STRICTLY older version — an equal version (e.g. a
+              // view_ack-only broadcast that didn't change state_version but
+              // still carries fresh view_acks) is still let through. Games
+              // without this field are unaffected — both sides read
+              // undefined and the check is skipped entirely.
+              const incomingVersion = message.game_state?.state_version;
+              const knownVersion = prev.game_state?.state_version;
+              if (incomingVersion != null && knownVersion != null && incomingVersion < knownVersion) {
+                console.warn(`⚠️ [VideoWatch] Rejecting stale game_state_update (incoming v${incomingVersion} < known v${knownVersion}) — likely an out-of-order message from a reconnect race`);
                 return prev;
               }
               return {
@@ -6399,10 +6629,29 @@ export default function VideoWatch() {
             // hit the identical error forever, stranding the player on a dead
             // overlay with no way out except a page refresh. Clear it locally
             // instead of surfacing the raw backend error as a retryable toast.
-            if (/game session \d+ not found/i.test(message.error)) {
-              toast.error('This game session is no longer available — it may have ended unexpectedly.');
-              setActiveGame(null);
-              setMyHand(null);
+            const notFoundMatch = message.error.match(/game session (\d+) not found/i);
+            if (notFoundMatch) {
+              // Real, confirmed race for pool specifically: the winning "shot"
+              // move deletes the game session from the backend's in-memory map
+              // the instant it resolves, but the shooter's device can still
+              // have an in-flight shot_progress/view_ack packet for that exact
+              // session on the wire at that moment — landing a beat later,
+              // after the legitimate game_ended (and its correct "X wins! 🏆"
+              // toast) already fired. Reported live as "'game ended
+              // unexpectedly' shows" right after a genuine win. If we already
+              // know THIS session just correctly ended (activeGame is still
+              // the finished/forfeited game, not a fresh one), this is that
+              // harmless straggler — the real ending was already handled, so
+              // don't re-clear activeGame or show a second, contradictory toast.
+              const erroredSessionId = Number(notFoundMatch[1]);
+              const isPostEndStraggler =
+                activeGame?.game_session_id === erroredSessionId &&
+                (activeGame?.status === 'finished' || activeGame?.status === 'forfeited');
+              if (!isPostEndStraggler) {
+                toast.error('This game session is no longer available — it may have ended unexpectedly.');
+                setActiveGame(null);
+                setMyHand(null);
+              }
             } else {
               // Rebus Round / Four Frames / Wordsmith already surface a
               // rejected move inline (a shake + message right at the input,

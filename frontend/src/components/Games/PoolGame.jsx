@@ -46,6 +46,49 @@ const POOL_BALL_COLORS = {
 };
 const poolBallGroup = (id) => (id === 8 ? 'eight' : id >= 1 && id <= 7 ? 'solids' : id >= 9 && id <= 15 ? 'stripes' : null);
 
+// A compact, directly-comparable summary of ball_positions — deliberately
+// NOT the full object (that would be noisy and hard to eyeball). Ball count
+// alone can't catch every desync (two clients could each have the same
+// count but different actual layouts), so this also sums every ball's x/y —
+// if host and member ever log a different fingerprint for the SAME
+// state_version, that's a real, confirmed desync, not just a suspicion. If
+// they match, the two devices genuinely agree on the board at that version.
+function poolBallsFingerprint(ballPositions) {
+  if (!ballPositions) return '0 balls';
+  const entries = Object.entries(ballPositions);
+  let sumX = 0, sumY = 0;
+  for (const [, pos] of entries) {
+    sumX += Number(pos?.x) || 0;
+    sumY += Number(pos?.y) || 0;
+  }
+  return `${entries.length} balls, Σxy=(${sumX.toFixed(3)}, ${sumY.toFixed(3)})`;
+}
+
+// Full per-ball position digest — logged once per COMPLETED shot (a real
+// state_version bump), never per-tick during a shot_progress relay. This is
+// deliberately a single plain string, not console.log(prefix, object) — the
+// point is letting host and member each copy one line straight from their
+// own DevTools console (this runs independently in each browser) and diff
+// them at the same "v<N>" to directly confirm or rule out a real desync,
+// rather than expanding a collapsed object tree by hand. Coordinates rounded
+// to 3 decimals: tight enough that a genuine mismatch stands out clearly,
+// loose enough not to just be floating-point noise between two independent
+// physics runs that both converged to "the same" resting position.
+function poolShotDigest(ballPositions, cueX, cueY, pocketedIds) {
+  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(3) : '?');
+  const potted = new Set((pocketedIds || []).map(Number));
+  const parts = [`cue:(${fmt(Number(cueX))},${fmt(Number(cueY))})`];
+  for (let id = 1; id <= 15; id++) {
+    if (potted.has(id)) {
+      parts.push(`${id}:POCKETED`);
+      continue;
+    }
+    const pos = ballPositions?.[String(id)];
+    parts.push(pos ? `${id}:(${fmt(Number(pos.x))},${fmt(Number(pos.y))})` : `${id}:?`);
+  }
+  return parts.join(' ');
+}
+
 function PoolBallIcon({ id }) {
   const group = poolBallGroup(id);
   const color = POOL_BALL_COLORS[id] || '#888';
@@ -99,6 +142,15 @@ export default function PoolGame({ gameState, players, currentUserId, onMove, on
   const status = gameState?.status;
   const isOver = status === 'finished' || status === 'completed' || status === 'forfeited';
   const winnerId = gameState?.winner_id;
+  // View-confirmation: state_version bumps on every real "shot" (never on
+  // the volatile shot_progress/game_event relays — see pool.go). Each
+  // client acks the version it has actually applied to its own iframe;
+  // view_acks (server-tracked, broadcast to everyone) is what lets any
+  // connected client — including a spectator — tell whether the OTHER
+  // side's board has genuinely caught up, not just assume the broadcast
+  // silently landed and rendered correctly.
+  const stateVersion = Number(data.state_version || 0);
+  const viewAcks = data.view_acks || {};
 
   const myIdx = players?.findIndex(p => p.user_id === currentUserId);
   const myTurnIdx = gameState?.current_turn ?? 0;
@@ -108,6 +160,19 @@ export default function PoolGame({ gameState, players, currentUserId, onMove, on
   const oppType = myIdx === 0 ? p1Type : p0Type;
   const myName = players?.[myIdx]?.username || 'You';
   const oppName = players?.[1 - myIdx]?.username || 'Opponent';
+  const oppUserId = players?.[1 - myIdx]?.user_id;
+  const oppAckedVersion = oppUserId != null ? Number(viewAcks[String(oppUserId)] ?? 0) : 0;
+
+  // aim_event is now a tagged wrapper ({shooter_id, payload}), not a bare
+  // opaque string — see pool.go's game_event handler. The tag exists so this
+  // component can positively identify whose cue-stick state is being relayed
+  // (rather than assuming) and show its own, WeWatch-owned "is aiming"
+  // indicator — independent of whether the embedded third-party engine's own
+  // WatchAim rendering actually draws a visible stick for a spectating
+  // client, which this app has no way to verify or control directly.
+  const aimShooterId = data.aim_event?.shooter_id;
+  const aimPayload = data.aim_event?.payload;
+  const opponentIsAiming = !isMyTurn && aimShooterId != null && oppUserId != null && Number(aimShooterId) === Number(oppUserId);
 
   // Split the shared `pocketed` list by which player's group each ball
   // belongs to, for the small ball-icon row rendered under each name below —
@@ -156,6 +221,21 @@ export default function PoolGame({ gameState, players, currentUserId, onMove, on
     iframeRef.current?.contentWindow?.postMessage({ source: 'wewatch-parent', ...msg }, '*');
   }, []);
 
+  // "Is the opponent's view behind mine" indicator — debounced so a normal,
+  // brief propagation delay (the opponent's own view_ack round-trip taking
+  // a moment to arrive after every ordinary shot) never flashes a false
+  // warning. Only surfaces if the gap persists past a couple of seconds,
+  // which is the genuinely useful signal — a real desync, a dropped
+  // connection, or exactly the kind of stuck-interactivity bug this whole
+  // mechanism was built to catch.
+  const [opponentBehind, setOpponentBehind] = useState(false);
+  useEffect(() => {
+    if (isOver || oppUserId == null) { setOpponentBehind(false); return undefined; }
+    if (oppAckedVersion >= stateVersion) { setOpponentBehind(false); return undefined; }
+    const t = setTimeout(() => setOpponentBehind(true), 2500);
+    return () => clearTimeout(t);
+  }, [isOver, oppUserId, oppAckedVersion, stateVersion]);
+
   // Listen for messages FROM the embedded engine (via dist/wewatch-bridge.js
   // in the fork). Validates the sender is genuinely this component's own
   // iframe, not just any postMessage with a matching source string.
@@ -186,28 +266,130 @@ export default function PoolGame({ gameState, players, currentUserId, onMove, on
     return () => window.removeEventListener('message', handler);
   }, [onMove]);
 
-  // Sync the embedded board to the authoritative post-shot state and gate
-  // interaction to whoever's turn it actually is, every time pool.go's own
-  // state changes. Re-syncing the shooter's own device to the exact
-  // positions it just reported is a harmless no-op — this is what makes late
-  // joins/reconnects and the non-shooting player's board both work for free.
-  useEffect(() => {
+  // Sync the embedded board to the authoritative post-shot state AND
+  // (re-)assert interactivity, together, every single time this fires —
+  // this is the real fix for a confirmed bug: these two used to be SEPARATE
+  // effects, with set_interactive keyed only on isMyTurn. A legal pocket
+  // keeps the same player's turn (CurrentTurn unchanged), so isMyTurn never
+  // toggles and that effect never re-fired — but the engine's own
+  // sync_state handler plausibly resets its internal interactive/aim-
+  // controller state as a side effect of repositioning balls (you shouldn't
+  // be able to aim mid-reposition). Net effect: after a legal-pocket "2nd
+  // chance," the shooter's own iframe silently stopped being interactive —
+  // their cue stopped emitting game_event (nothing to broadcast) and they
+  // couldn't take their next shot at all (so ball_positions never updated
+  // again either — both reported symptoms, one root cause). Merging both
+  // into one effect guarantees interactivity is re-asserted on every single
+  // board resync, not just when isMyTurn happens to toggle.
+  //
+  // Also sends view_ack once applied — see pool.go's processPoolViewAck —
+  // so every connected client (via view_acks in the broadcast) can tell
+  // whether this device has actually caught up to the current
+  // state_version, not just assume the WS message silently landed.
+  //
+  // CONFIRMED-LIVE REGRESSION, now fixed by the two refs below: EVERY
+  // successfully processed move — including a no-op view_ack — still
+  // triggers a full room-wide game_state_update broadcast
+  // (broadcastGameStateLocked runs unconditionally regardless of whether
+  // GameData actually changed; see pool.go/game_manager.go). Separately,
+  // GameOverlay.jsx's onMove (its handleMove) is a plain, unmemoized
+  // function recreated on every GameOverlay render — its own
+  // `if (!activeGame) return null` sits before any hooks, so it can't
+  // safely be wrapped in useCallback without risking a Rules-of-Hooks
+  // violation the moment a game opens/closes, so that instability isn't
+  // fixed at the source. Put together: receiving that broadcast re-renders
+  // this tree → fresh onMove reference → syncBoardAndInteractivity
+  // recreated (onMove is in its own deps) → the effect below re-fires →
+  // it used to unconditionally resend view_ack → another broadcast →
+  // another re-render → forever. Confirmed live: hundreds of identical
+  // view_ack sends per second, React's "Maximum update depth exceeded"
+  // firing repeatedly, and the iframe flooded with sync_state resets faster
+  // than its own physics could progress — which is why the balls looked
+  // frozen at the rack and the cue stick looked stuck.
+  //
+  // Fix: never send more than one ack per genuinely NEW state_version
+  // (lastAckedVersionRef), and never re-sync the iframe unless the actual
+  // board-relevant data changed (lastSyncSignatureRef) — regardless of how
+  // many times this effect gets re-triggered by an unrelated parent
+  // re-render. Re-syncing the shooter's own device to the exact positions
+  // it just reported is still a harmless no-op when the signature does
+  // change — this is what makes late joins/reconnects and the non-shooting
+  // player's board both work for free.
+  const lastSyncSignatureRef = useRef(null);
+  const lastAckedVersionRef = useRef(-1);
+  // Tracks the last state_version we've logged a full position digest for —
+  // deliberately separate from lastSyncSignatureRef (which also reacts to
+  // ballInHandFromServer/myBallTypeNumeric/isMyTurn/isOver, not just a real
+  // completed shot). This one exists purely to fire the SHOT RESOLVED digest
+  // exactly once per completed shot, never on any other kind of re-sync.
+  const lastLoggedShotVersionRef = useRef(-1);
+
+  const syncBoardAndInteractivity = useCallback((forceIframeSync = false) => {
     if (!iframeReady) return;
-    postToFrame({
-      type: 'sync_state',
-      payload: {
-        ball_positions: data.ball_positions || {},
-        ball_in_hand: ballInHandFromServer,
-        my_ball_type: myBallTypeNumeric,
-      },
-    });
+
+    if (stateVersion !== lastLoggedShotVersionRef.current) {
+      lastLoggedShotVersionRef.current = stateVersion;
+      const turnHolder = isMyTurn ? myName : oppName;
+      const turnHolderId = isMyTurn ? currentUserId : oppUserId;
+      console.log(
+        `🎱 [Pool] SHOT RESOLVED v${stateVersion} → turn=${turnHolder}(${turnHolderId}) | ${poolShotDigest(data.ball_positions, data.cue_pos_x, data.cue_pos_y, pocketedIds)}`
+      );
+    }
+
+    const signature = JSON.stringify([
+      data.ball_positions || {}, ballInHandFromServer, myBallTypeNumeric, isMyTurn, isOver,
+    ]);
+    if (forceIframeSync || signature !== lastSyncSignatureRef.current) {
+      const isNewSignature = signature !== lastSyncSignatureRef.current;
+      lastSyncSignatureRef.current = signature;
+      postToFrame({
+        type: 'sync_state',
+        payload: {
+          ball_positions: data.ball_positions || {},
+          ball_in_hand: ballInHandFromServer,
+          my_ball_type: myBallTypeNumeric,
+        },
+      });
+      postToFrame({ type: 'set_interactive', value: isMyTurn && !isOver });
+      // One line per genuine board update — compare this exact line between
+      // host and member's consoles at the same "v<N>" to directly confirm
+      // (or rule out) a real desync, rather than guessing from symptoms.
+      console.log(
+        `🎱 [Pool] board sync v${stateVersion}${forceIframeSync && !isNewSignature ? ' (heartbeat, unchanged)' : ''} — ${poolBallsFingerprint(data.ball_positions)}, turn=${isMyTurn ? 'mine' : 'opponent'}`
+      );
+    }
+
+    // The actual loop-breaker: the server already has this exact ack on
+    // record the moment it's sent once, so resending an already-acked
+    // version provides zero new information — only the risk of another
+    // broadcast for nothing. Unlike the iframe sync above (which the
+    // heartbeat below still forces, since a silently-reset iframe has no
+    // memory of its own), there is nothing to "heal" here by repeating it.
+    if (stateVersion !== lastAckedVersionRef.current) {
+      lastAckedVersionRef.current = stateVersion;
+      onMove({ move_type: 'view_ack', state_version: stateVersion });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [iframeReady, JSON.stringify(data.ball_positions), ballInHandFromServer, myBallTypeNumeric, postToFrame]);
+  }, [iframeReady, JSON.stringify(data.ball_positions), ballInHandFromServer, myBallTypeNumeric, isMyTurn, isOver, stateVersion, postToFrame, onMove]);
 
   useEffect(() => {
-    if (!iframeReady) return;
-    postToFrame({ type: 'set_interactive', value: isMyTurn && !isOver });
-  }, [iframeReady, isMyTurn, isOver, postToFrame]);
+    syncBoardAndInteractivity();
+  }, [syncBoardAndInteractivity]);
+
+  // Self-healing confirmation heartbeat — force-resyncs the EMBEDDED IFRAME
+  // (board + interactivity) on a fixed interval regardless of the dedup
+  // above, since the iframe itself has no ack mechanism and could plausibly
+  // have silently reset without this component ever knowing — same
+  // "periodic full re-assertion closes any missed-update gap" pattern
+  // already proven elsewhere in this app (Ping Pong's sync_heartbeat,
+  // cinema playback sync). Deliberately does NOT force a redundant ack
+  // resend — see the loop-breaker comment above for why that would only
+  // reintroduce risk with no benefit.
+  useEffect(() => {
+    if (!iframeReady || isOver) return undefined;
+    const interval = setInterval(() => syncBoardAndInteractivity(true), 3000);
+    return () => clearInterval(interval);
+  }, [iframeReady, isOver, syncBoardAndInteractivity]);
 
   // Forwards the shooter's live, in-progress ball positions to this
   // player's own iframe (a no-op harmless echo on the shooter's own device —
@@ -229,13 +411,20 @@ export default function PoolGame({ gameState, players, currentUserId, onMove, on
   // player's own iframe — a harmless no-op on the shooter's own device (the
   // bridge's handleGameEvent ignores it there via isMyTurnNow), and on every
   // other device drives the engine's own real WatchAim controller (camera +
-  // cue stick follow the shooter). data.aim_event is already a JSON string
-  // (see pool.go/wewatch-bridge.js), so no extra JSON.stringify is needed in
-  // the dependency array — it's a plain string primitive already.
+  // cue stick follow the shooter). Only the inner, still-100%-opaque
+  // aimPayload is forwarded — the shooter_id tag pool.go now wraps it with is
+  // consumed here (opponentIsAiming, above) for WeWatch's own indicator, not
+  // sent on to the embedded engine, which expects exactly the same shape it
+  // itself emitted. Using the whole data.aim_event object (not just the
+  // payload string) as the effect's own dependency means a fresh broadcast —
+  // even one whose inner payload happens to be byte-identical to the last —
+  // is a genuinely new object reference each time, so this reliably re-fires
+  // on every relay tick rather than relying on string value-equality.
   useEffect(() => {
     if (!iframeReady) return;
-    if (!data.aim_event) return;
-    postToFrame({ type: 'game_event', payload: data.aim_event });
+    if (!aimPayload) return;
+    postToFrame({ type: 'game_event', payload: aimPayload });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iframeReady, data.aim_event, postToFrame]);
 
   useEffect(() => {
@@ -335,6 +524,15 @@ export default function PoolGame({ gameState, players, currentUserId, onMove, on
         </div>
       )}
 
+      {/* View-confirmation: only surfaces if the opponent's own view_ack has
+          genuinely lagged the current state_version for a couple of seconds
+          straight — see the debounced opponentBehind effect above. */}
+      {opponentBehind && (
+        <div className="bg-yellow-800/70 text-center text-xs py-1 text-yellow-200 flex-shrink-0">
+          ⏳ {oppName}'s view may be behind — waiting for their board to catch up…
+        </div>
+      )}
+
       {/* Embedded engine */}
       <div className="flex-1 min-h-0 relative">
         <iframe
@@ -345,6 +543,26 @@ export default function PoolGame({ gameState, players, currentUserId, onMove, on
           sandbox="allow-scripts allow-same-origin allow-pointer-lock"
           allow="autoplay"
         />
+
+        {/* A member reported never seeing the current shooter's cue-stick at
+            all — whether the embedded (third-party) engine's own WatchAim
+            controller actually renders a visible stick for a spectating
+            client isn't something this component can verify, so this badge
+            is a separate, WeWatch-owned confirmation that live aim activity
+            IS reaching this device, independent of the 3D scene's own
+            rendering. Only shown while the opponent is actively moving their
+            cue (aim_event genuinely present for them this turn) — not for
+            the whole duration of their turn, so it reads as "live motion",
+            not just a restatement of the existing "X's TURN" badge above. */}
+        {opponentIsAiming && (
+          <div
+            className="absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1 bg-orange-600/90 rounded-full text-xs font-bold shadow-lg pointer-events-none"
+            style={{ animation: 'poolAimPulse 1.2s ease-in-out infinite' }}
+          >
+            <style>{`@keyframes poolAimPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }`}</style>
+            🎯 {oppName} is lining up a shot…
+          </div>
+        )}
       </div>
     </div>
 

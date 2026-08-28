@@ -86,6 +86,17 @@ type GameSessionState struct {
 	// is reached by any player. Absent entries (a round that only had 4
 	// usable photos that round) are the normal, expected case, not an error.
 	FourFramesAltPhotos map[int]string
+
+	// Hide & Seek-only field. Deliberately kept OFF GameData and never
+	// broadcast/persisted to GameSession.GameState — a Prop's chosen hiding
+	// spot is the entire game's hidden information, and unlike Crazy
+	// Eights' hands, nobody (not even other Props) ever needs this
+	// delivered to them privately either — it just needs to never reach
+	// the wire at all until the moment a Hunter's search_spot move finds
+	// it (see hide_seek.go's file-level note). Keyed by player user ID,
+	// value is the spot index (0..hideSeekSpotCount-1); an entry is
+	// deleted the instant that player is found.
+	HideSeekSpots map[uint]int
 }
 
 // NewGameManager creates a new game manager instance
@@ -154,6 +165,11 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"curling":      true,
 		"slice_frenzy": true,
 		"skeeball":     true,
+		"tank_battle":  true,
+		"bomberman":    true,
+		"football":     true,
+		"blob_battle":  true,
+		"hide_seek":    true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -226,6 +242,30 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 	if gameType == "curling" && len(players) != 2 {
 		return nil, fmt.Errorf("curling is a 2-player game")
 	}
+	// Tank Battle is a genuine 1v1 real-time duel (each client owns and
+	// self-reports its own tank; the shooter is the sole authority on
+	// whether their own bullets land) — no natural way to extend the
+	// symmetric hit-reporting model past exactly two combatants.
+	if gameType == "tank_battle" && len(players) != 2 {
+		return nil, fmt.Errorf("tank_battle is a 2-player game")
+	}
+	// Bomberman's grid layout has exactly 4 fixed corner spawn points
+	// (bombermanSpawnPoints) — capped there by design, and a real duel needs
+	// at least 2.
+	if gameType == "bomberman" && (len(players) < 2 || len(players) > 4) {
+		return nil, fmt.Errorf("bomberman supports 2-4 players")
+	}
+	// Blob Battle is a genuine free-for-all — no team/pairing constraint,
+	// just a sensible casual party-size cap.
+	if gameType == "blob_battle" && (len(players) < 2 || len(players) > 8) {
+		return nil, fmt.Errorf("blob_battle supports 2-8 players")
+	}
+	// Hide & Seek needs at least 1 hunter and 1 prop, which hideSeekNumHunters's
+	// floor-of-1 already guarantees for any headcount >= 2; the upper bound
+	// is the same casual party-size cap as blob_battle.
+	if gameType == "hide_seek" && (len(players) < 2 || len(players) > 8) {
+		return nil, fmt.Errorf("hide_seek supports 2-8 players")
+	}
 	// ramp_rush temporarily removed (see validGameTypes above) — this check is
 	// now unreachable but left in place for when it's re-enabled.
 	// if gameType == "ramp_rush" && len(players) != 2 {
@@ -291,6 +331,43 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		gameState.GameSession.GameState = gameState.GameData
 	case "pool":
 		for k, v := range poolInitialGameData() {
+			gameState.GameData[k] = v
+		}
+		gameState.GameSession.GameState = gameState.GameData
+	case "tank_battle":
+		playerIDs := make([]uint, len(players))
+		for i, p := range players {
+			playerIDs[i] = p.UserID
+		}
+		for k, v := range tankBattleInitialState(playerIDs) {
+			gameState.GameData[k] = v
+		}
+		gameState.GameSession.GameState = gameState.GameData
+	case "bomberman":
+		playerIDs := make([]uint, len(players))
+		for i, p := range players {
+			playerIDs[i] = p.UserID
+		}
+		for k, v := range bombermanInitialState(playerIDs) {
+			gameState.GameData[k] = v
+		}
+		gameState.GameSession.GameState = gameState.GameData
+	case "blob_battle":
+		playerIDs := make([]uint, len(players))
+		for i, p := range players {
+			playerIDs[i] = p.UserID
+		}
+		for k, v := range blobBattleInitialState(playerIDs) {
+			gameState.GameData[k] = v
+		}
+		gameState.GameSession.GameState = gameState.GameData
+	case "hide_seek":
+		playerIDs := make([]uint, len(players))
+		for i, p := range players {
+			playerIDs[i] = p.UserID
+		}
+		gameState.HideSeekSpots = map[uint]int{}
+		for k, v := range hideSeekInitialState(playerIDs) {
 			gameState.GameData[k] = v
 		}
 		gameState.GameSession.GameState = gameState.GameData
@@ -377,13 +454,59 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"sudoku":                true, // all players solve same puzzle in parallel
 		"ping_pong":             true, // internal phase validation restricts who acts
 		"air_hockey":            true, // internal phase validation restricts who acts
+		"tank_battle":           true, // both tanks act simultaneously and continuously — no turn concept at all
+		"bomberman":             true, // all players move/place bombs simultaneously and continuously — no turn concept at all
+		"blob_battle":           true, // all players move continuously and simultaneously — no turn concept at all
+		"hide_seek":             true, // any prop can hide, any hunter can search, at any time — no turn concept at all
 		"roulette":              true, // all players bet freely; host-only spin/end enforced inside processRouletteMove
 		"uno":                   true, // catch_uno can be sent by any player at any time; play/draw/uno enforced internally
 		"jigsaw":                true, // fully cooperative — any player can pick up/place any unclaimed piece at any time
 		"rebus_round":           true, // any player can submit "answer" at any time (unlimited retries); host-only rebus_start/reveal/rebus_end enforced internally
 		"four_frames":           true, // same shape as rebus_round — any player can answer at any time; host-only four_frames_start/reveal/four_frames_end enforced internally. Added here from day one, unlike rebus_round which shipped without this and needed a same-day fix (2026-08-11) after a live test showed it locking every non-current-turn player out of "answer" entirely.
 	}
-	if !simultaneousGames[gameState.GameSession.GameType] {
+	// view_ack (pool's own view-confirmation mechanism, see pool.go) is
+	// exempt from the turn gate for every game type, not just simultaneous
+	// ones — it's a purely informational "I've applied this state" ping, not
+	// a gameplay action, and the NON-shooting player in a strictly
+	// turn-based game (pool included) needs to be able to send it too.
+	// shot_progress/game_event (pool's own live ball/cue-aim relays, ~10Hz/
+	// ~4Hz while the shooter's own shot is rolling) are exempt for the same
+	// reason PLUS a real, confirmed race: turn flips the instant the
+	// authoritative "shot" move resolves, but the shooter's device can still
+	// have a straggling shot_progress/game_event packet in flight at that
+	// exact moment (network latency, or the tiny gap between the client's
+	// own allStationary() check and the backend actually processing the
+	// final report) — landing a beat AFTER CurrentTurn has already advanced.
+	// These two move types are pure ephemeral relays with zero gameplay
+	// effect regardless of who sends them (see processPoolShotProgress /
+	// pool.go's game_event case — neither reads playerID for correctness),
+	// so rejecting a late one gains nothing and previously surfaced as a
+	// confusing "not your turn" toast on essentially every single turn
+	// handover — reported live as "a lot of toast messages... this isn't
+	// necessary in the pool game because the game already shows whose turn
+	// it currently is". A generic exemption here (rather than adding pool to
+	// simultaneousGames, which would incorrectly also let either player send
+	// real "shot" moves out of turn) keeps this scoped to exactly the
+	// harmless relay move types.
+	// throw_progress (bowling's own live ball/pin relay, ~10Hz while the
+	// active thrower's local Ammo.js physics is rolling — see bowling.go's
+	// processBowlingThrowProgress) is exempt for the exact same reason as
+	// pool's shot_progress: bowling hands the turn to the next player the
+	// instant a throw settles (bowlingAdvanceToNextActivePlayer), but the
+	// thrower's own client can still have one straggling throw_progress
+	// packet in flight at that exact moment — landing a beat after
+	// CurrentTurn already moved on. It's a pure ephemeral relay with zero
+	// gameplay effect regardless of who sends it, so rejecting a late one
+	// gains nothing and would just be a confusing failed send right as a
+	// throw finishes.
+	// basketball's "shoot_progress" is the same exemption once more — a live
+	// ~10Hz relay of the shooter's own ball position while airborne (see
+	// processBasketballMove in basketball.go); the actual "shoot" move that
+	// decides make/miss and advances CurrentTurn is unaffected, so a
+	// straggling packet arriving just after the turn passes is a harmless
+	// no-op to reject, not worth a confusing failed-send right as a shot ends.
+	turnGateExemptMoveTypes := map[string]bool{"view_ack": true, "shot_progress": true, "game_event": true, "throw_progress": true, "shoot_progress": true}
+	if !turnGateExemptMoveTypes[moveType] && !simultaneousGames[gameState.GameSession.GameType] {
 		currentPlayer := gameState.Players[gameState.CurrentTurn]
 		if currentPlayer.UserID != playerID {
 			return fmt.Errorf("not your turn")
@@ -401,9 +524,19 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 	// ~4Hz aim-input throttle — a purely cosmetic, opaque relay of the
 	// shooter's live aim/cue-stick state while it's their turn, never a
 	// discrete game action (see pool.go's game_event case).
-	volatileRT := map[string]bool{"state_sync": true, "paddle_move": true, "mallet_move": true, "piece_drag": true, "shot_progress": true, "game_event": true}
+	// tank_battle's "fire" is the same idea once more — a discrete but
+	// high-ish-frequency (bounded only by fire rate, not a fixed tick) event
+	// that every client locally simulates identically from the relayed
+	// origin/angle/timestamp; nothing about it needs DB persistence, since a
+	// late joiner has no use for historical bullets that have already
+	// resolved one way or another. bowling's "throw_progress" is the same
+	// idea once more — ~10Hz ball/pin transform snapshots from the active
+	// thrower's own local physics (see processBowlingThrowProgress in
+	// bowling.go); a late joiner gets the current standing-pin layout from
+	// the (non-volatile, DB-persisted) "throw" move's own pin_mask instead.
+	volatileRT := map[string]bool{"state_sync": true, "paddle_move": true, "mallet_move": true, "piece_drag": true, "shot_progress": true, "game_event": true, "fire": true, "ball_sync": true, "view_ack": true, "throw_progress": true, "shoot_progress": true}
 	isVolatile := volatileRT[moveType] &&
-		(gameState.GameSession.GameType == "ping_pong" || gameState.GameSession.GameType == "air_hockey" || gameState.GameSession.GameType == "jigsaw" || gameState.GameSession.GameType == "pool")
+		(gameState.GameSession.GameType == "ping_pong" || gameState.GameSession.GameType == "air_hockey" || gameState.GameSession.GameType == "jigsaw" || gameState.GameSession.GameType == "pool" || gameState.GameSession.GameType == "tank_battle" || gameState.GameSession.GameType == "bomberman" || gameState.GameSession.GameType == "blob_battle" || gameState.GameSession.GameType == "bowling" || gameState.GameSession.GameType == "basketball")
 
 	gameMove := &models.GameMove{
 		GameSessionID: gameSessionID,
@@ -496,6 +629,18 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processPingPongMove(gameState, playerID, moveData)
 	case "air_hockey":
 		gameOver, winnerID, err = gm.processAirHockeyMove(gameState, playerID, moveData)
+	case "tank_battle":
+		gameOver, winnerID, err = gm.processTankBattleMove(gameState, playerID, moveData)
+	case "bomberman":
+		gameOver, winnerID, err = gm.processBombermanMove(gameState, playerID, moveData)
+	case "football":
+		// Arcade iframe (single-player 3D match vs AI, host-only) — no
+		// server-side move logic needed, matching space_attack/toad_ball.
+		gameOver, winnerID, err = false, nil, nil
+	case "blob_battle":
+		gameOver, winnerID, err = gm.processBlobBattleMove(gameState, playerID, moveData)
+	case "hide_seek":
+		gameOver, winnerID, err = gm.processHideSeekMove(gameState, playerID, moveData)
 	case "space_attack":
 		// Arcade iframe — no server-side move logic needed
 		gameOver, winnerID, err = false, nil, nil
@@ -575,6 +720,10 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"ludo":                true, // Ludo manages its own turn (roll → move two-phase)
 		"ping_pong":           true, // Real-time; no CurrentTurn pointer used
 		"air_hockey":          true, // Real-time; no CurrentTurn pointer used
+		"tank_battle":         true, // Real-time; no CurrentTurn pointer used
+		"bomberman":           true, // Real-time; no CurrentTurn pointer used
+		"blob_battle":         true, // Real-time; no CurrentTurn pointer used
+		"hide_seek":           true, // Real-time; no CurrentTurn pointer used
 		"backgammon":          true, // roll → move(s) → (auto-)pass; turn only advances when the backend decides dice are exhausted/unusable
 		"property_tycoon":     true, // roll → land/resolve → (auto-)advance; doubles grant another roll, a pending buy/decline defers the advance
 		"texas_holdem":        true, // action_on is managed directly (skips folded/all-in/busted players, reopens on a raise); never a simple +1 mod N
@@ -714,6 +863,7 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 
 	delete(gm.activeGames, gameSessionID)
 	delete(gm.roomActiveGames, roomID)
+	lastLoggedTurnState.Delete(gameSessionID)
 	gm.clearFourFramesPrefetch(gameSessionID)
 
 	log.Printf("🎮 [GameManager] Ended game %d (status: %s, winner: %v)", gameSessionID, status, winnerID)
@@ -773,6 +923,7 @@ func (gm *GameManager) CleanupRoomGame(roomID uint) {
 	}
 	delete(gm.activeGames, gameSessionID)
 	delete(gm.roomActiveGames, roomID)
+	lastLoggedTurnState.Delete(gameSessionID)
 }
 
 // GetPlayerHand returns a copy of the given player's current hand in the room's
@@ -910,7 +1061,30 @@ func (gm *GameManager) BroadcastGameState(roomID uint) error {
 // two resulting broadcasts didn't necessarily reach clients in the same order
 // the mutations actually happened — clients could end up disagreeing with the
 // server (and each other) about whose turn it was.
+// lastLoggedTurnState tracks, per game session, the last (current_turn,
+// state_version) pair we actually logged — used by broadcastGameStateLocked
+// below to print one short line only when either value genuinely changes,
+// instead of nothing at all for state_version (buried deep inside the
+// game_state JSON, never visible in the Hub's own truncated preview log) or
+// a line on every single high-frequency broadcast (e.g. Pool's 10Hz
+// shot_progress relay, which never changes either value). This is what lets
+// a backend log capture directly answer "is this shot actually stuck, or are
+// these legitimate back-to-back turns for the same player" without needing
+// the full, noisy per-tick game_state dump.
+var lastLoggedTurnState sync.Map // gameSessionID(uint) -> "turn|state_version" string
+
 func (gm *GameManager) broadcastGameStateLocked(gameState *GameSessionState) {
+	stateVersion := interface{}(nil)
+	if gameState.GameData != nil {
+		stateVersion = gameState.GameData["state_version"]
+	}
+	turnKey := fmt.Sprintf("%d|%v", gameState.CurrentTurn, stateVersion)
+	sessionID := gameState.GameSession.ID
+	if prev, ok := lastLoggedTurnState.Load(sessionID); !ok || prev.(string) != turnKey {
+		lastLoggedTurnState.Store(sessionID, turnKey)
+		log.Printf("🎮 [GameManager] state change: session=%d type=%s turn=%d state_version=%v", sessionID, gameState.GameSession.GameType, gameState.CurrentTurn, stateVersion)
+	}
+
 	message := map[string]interface{}{
 		"type":            "game",
 		"action":          "game_state_update",

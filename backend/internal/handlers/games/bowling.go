@@ -258,6 +258,27 @@ func (gm *GameManager) processBowlingMove(gameState *GameSessionState, playerID 
 			return false, nil, err
 		}
 
+		// The thrower's own client-side physics is the only place that knows
+		// which SPECIFIC pins are still standing (the server only ever sees
+		// an aggregate pins-down count — see AddThrowResult) — this bitmask
+		// (bit i set = pin i standing, matching bowlingPhysics.js's own
+		// PIN_POSITIONS-indexed convention) is what lets a spectator with no
+		// local physics render the correct rack layout between throws,
+		// rather than just a "how many are up" number. Optional: an older
+		// client omitting it just leaves whatever mask was already broadcast
+		// (harmless — the very next throw from the same/any thrower will
+		// include a fresh one).
+		if maskF, ok := moveData["pin_mask"].(float64); ok {
+			gameState.GameData["pin_mask"] = int(maskF)
+		}
+		// This throw has fully settled — any in-flight throw_progress
+		// snapshot is now stale (the ball/pins it described have already
+		// resolved to whatever pin_mask above now says). Clearing it stops a
+		// late-joining spectator from ever rendering a frozen mid-air ball
+		// that nothing will ever update again, mirroring pool.go's identical
+		// delete(...,"live_ball_positions") on its own final "shot" move.
+		delete(gameState.GameData, "throw_progress")
+
 		// closeFrame (called from inside AddThrowResult) is the ONLY place
 		// that either advances FrameNumber (a regular frame closing) or
 		// flips GameOver (the 10th frame's own final resolution, which
@@ -312,6 +333,9 @@ func (gm *GameManager) processBowlingMove(gameState *GameSessionState, playerID 
 		}
 		return false, nil, nil
 
+	case "throw_progress":
+		return processBowlingThrowProgress(gameState, moveData)
+
 	default:
 		return false, nil, fmt.Errorf("unknown bowling move type: %s", moveType)
 	}
@@ -332,6 +356,27 @@ func (gm *GameManager) bowlingAdvanceToNextActivePlayer(gameState *GameSessionSt
 			return
 		}
 	}
+}
+
+// processBowlingThrowProgress relays a live, in-progress throw snapshot (the
+// active thrower's own ball/pin transforms, sampled from their local Ammo.js
+// simulation at a throttled rate — see BowlingGame.jsx's sendThrowProgress)
+// straight into GameData for the standard broadcastGameStateLocked path to
+// fan out. Purely cosmetic — the receiving room members' own passive scene
+// only ever DRAWS these positions, never runs physics on them, so there's
+// nothing here to validate: a malformed/missing field just means that one
+// frame's spectator render is a no-op, never a state-corruption risk. Same
+// trust model as pool.go's processPoolShotProgress, which this mirrors.
+func processBowlingThrowProgress(gameState *GameSessionState, moveData map[string]interface{}) (bool, *uint, error) {
+	progress := map[string]interface{}{}
+	if ball, ok := moveData["ball"]; ok {
+		progress["ball"] = ball
+	}
+	if pins, ok := moveData["pins"]; ok {
+		progress["pins"] = pins
+	}
+	gameState.GameData["throw_progress"] = progress
+	return false, nil, nil
 }
 
 func bowlingWinnerByScore(gameState *GameSessionState) *uint {

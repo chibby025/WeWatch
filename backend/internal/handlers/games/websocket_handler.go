@@ -150,6 +150,11 @@ var arcadeGameTypes = map[string]bool{
 	"rhythm_hero":  true,
 	"slice_frenzy": true,
 	"skeeball":     true,
+	// Replaced the old real-time 2-6 player relay-based football with a
+	// single-player 3D match (host plays vs AI, everyone else spectates) —
+	// same host-only-ever shape as DOOM/Golf, so it moved from a real-time
+	// multiplayer game into this map instead.
+	"football": true,
 }
 
 // minPlayersOverride lets a genuinely multiplayer game still be launched
@@ -223,6 +228,17 @@ func (h *GameWebSocketHandler) GetActiveGameMessage(roomID uint) map[string]inte
 			"host_id":         gameState.GameSession.HostID,
 			"players":         gameState.Players,
 			"game_state":      gameStateOut,
+			// current_turn/status were missing here entirely — confirmed a
+			// real bug (not just a defensive frontend default): a client
+			// reconnecting mid-game (e.g. a dropped WS, code 1006) receives
+			// this exact message to rehydrate, but with no current_turn the
+			// frontend had nothing but a hardcoded 0 to fall back on — always
+			// wrong past turn 0, silently corrupting isMyTurn/interactivity
+			// for whichever player's connection blipped, well after the
+			// board itself (game_state, correctly fresh above) had already
+			// moved on. Included now so rehydration is genuinely complete.
+			"current_turn": gameState.CurrentTurn,
+			"status":       gameState.GameSession.Status,
 		},
 	}
 }
@@ -254,10 +270,9 @@ func (h *GameWebSocketHandler) GetPlayerHandMessage(roomID uint, userID uint) ma
 func (h *GameWebSocketHandler) sendHandUpdate(roomID uint, userID uint) {
 	message := h.GetPlayerHandMessage(roomID, userID)
 	if message == nil {
-		// 🐛 [DEBUG] temporary — GetPlayerHandMessage returns nil for any
-		// non-card game OR when GetPlayerHand found no active game / no Hands
-		// map / no entry for this userID. Logging which of those it was.
-		log.Printf("🐛 [DEBUG] sendHandUpdate: no hand message for user %d room %d (nil from GetPlayerHandMessage)", userID, roomID)
+		// No-op for any non-card game (or a card game with no active hand for this
+		// user) — this is the expected, common case on every move for every game
+		// type that isn't Crazy Eights/Wordsmith, so it's deliberately silent here.
 		return
 	}
 	handLen := -1
@@ -452,8 +467,18 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
 		}
 
 		userID := uint(playerMap["user_id"].(float64))
-		username := playerMap["username"].(string)
-		color := playerMap["color"].(string)
+		// username/color are cosmetic display fields, not required to start a
+		// game — a raw (non-frontend) caller omitting either used to panic
+		// this whole function via an unchecked type assertion (caught by the
+		// outer defer/recover, but silently swallowing the start_game request
+		// as a generic "internal error"). Safe comma-ok extraction with a
+		// sensible default fixes this without changing behavior for any
+		// well-formed request, which always includes both fields today.
+		username, _ := playerMap["username"].(string)
+		if username == "" {
+			username = fmt.Sprintf("Player %d", userID)
+		}
+		color, _ := playerMap["color"].(string)
 		avatarURL, _ := playerMap["avatar_url"].(string)
 
 		players = append(players, models.Player{
@@ -538,6 +563,29 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
 	// 	}
 	// }
 
+	// current_turn/status were missing here entirely — the exact same real bug
+	// GetActiveGameMessage's own doc comment above already describes and fixes
+	// for the *rehydration* path, but this is the LIVE broadcast sent the
+	// instant a game actually starts, to every already-connected client — a
+	// separate code path that never got the same fix. Every game whose
+	// starting player is always players[0] (CurrentTurn=0 at creation, the
+	// common case) masked this completely, since the frontend's defensive
+	// `?? 0` fallback happened to already match. Dominoes breaks that
+	// coincidence on purpose (the highest-double holder goes first, which
+	// dealDominoes can set to any player index) — when that's players[1] and
+	// not players[0], every connected client silently defaulted to treating
+	// players[0] as the current turn: the true current player (players[1])
+	// never saw their own turn UI at all, and the other player, believing
+	// (wrongly) it was their go, got a genuine, correctly-enforced
+	// "not your turn" rejection the instant they tried to act — exactly
+	// matching the reported symptom. Confirmed live via a raw 2-account WS
+	// test before this fix (the captured game_started payload had no
+	// current_turn anywhere), not assumed.
+	currentTurn := 0
+	if gs, exists := h.gameManager.GetActiveGame(roomID); exists {
+		currentTurn = gs.CurrentTurn
+	}
+
 	message := map[string]interface{}{
 		"type":   "game",
 		"action": "game_started",
@@ -547,6 +595,8 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
 			"host_id":         hostID,
 			"players":         players,
 			"game_state":      gameStateBcast,
+			"current_turn":    currentTurn,
+			"status":          gameSession.Status,
 		},
 	}
 
@@ -732,6 +782,30 @@ func (h *GameWebSocketHandler) sendError(client interface{}, errorMsg string) {
 // closes a completed game's result screen. This ensures the winner banner / game
 // overlay is dismissed for every client, not just the one that clicked Close.
 // Only the host (or any participant in a completed game) can trigger this.
+//
+// This is ALSO the safety net for the much more common real case: the
+// frontend's own generic "×" close button (VideoWatch.jsx's handleGameClose)
+// only sends end_game for a game whose status is ALREADY terminal
+// (finished/completed/forfeited/ended) — for any game still genuinely
+// IN PROGRESS, clicking a plain "×" (rather than a dedicated "End Game"
+// button, which several games — Tank Battle, Bomberman — never had at all)
+// used to just clear that ONE client's own local state and send this same
+// close_game message, with ZERO effect on the backend: gm.activeGames/
+// gm.roomActiveGames kept the session marked active forever, since nothing
+// ever called EndGame for it. StartGame's own "room already has an active
+// game" guard then permanently blocked that room from starting anything —
+// the same game OR a different one — until the server itself restarted, a
+// real, confirmed root cause consistent with reports of games "not
+// broadcasting"/turn state getting confused/stale after simply closing out
+// of an unfinished game.
+//
+// Fixed here, not by auditing every individual game component's own close
+// button — this is the one place every close_game message passes through
+// regardless of which frontend path sent it. If the game this session
+// belongs to is STILL active server-side, forfeit-end it first (identical
+// logic to handleGameEnd's own forfeit path) before broadcasting the
+// dismissal, so the backend and every client's UI agree the game is
+// actually over.
 func (h *GameWebSocketHandler) handleCloseGame(client interface{}, data map[string]interface{}) {
 	type ClientFields interface {
 		GetRoomID() uint
@@ -739,10 +813,35 @@ func (h *GameWebSocketHandler) handleCloseGame(client interface{}, data map[stri
 	}
 	cf := client.(ClientFields)
 	roomID := cf.GetRoomID()
+	userID := cf.GetUserID()
 
 	gameSessionID := uint(0)
 	if v, ok := data["game_session_id"].(float64); ok {
 		gameSessionID = uint(v)
+	}
+
+	// The frontend's plain "×" close doesn't always know/send a
+	// game_session_id (VideoWatch.jsx's handleGameClose never includes one)
+	// — look up the room's own currently-active game directly rather than
+	// trusting a client-supplied ID, which is both more robust and covers
+	// the common no-ID case.
+	if activeState, exists := h.gameManager.GetActiveGame(roomID); exists {
+		if gameSessionID == 0 || activeState.GameSession.ID == gameSessionID {
+			gameSessionID = activeState.GameSession.ID
+			var winnerID *uint
+			for _, p := range activeState.Players {
+				if p.UserID != userID {
+					id := p.UserID
+					winnerID = &id
+					break
+				}
+			}
+			if err := h.gameManager.EndGame(gameSessionID, winnerID, "forfeited"); err != nil {
+				log.Printf("⚠️ [GameWebSocketHandler] handleCloseGame: failed to forfeit still-active game %d in room %d: %v", gameSessionID, roomID, err)
+			} else {
+				log.Printf("🎮 [GameWebSocketHandler] handleCloseGame forfeited a still-active game %d in room %d (closed without a proper end-game call)", gameSessionID, roomID)
+			}
+		}
 	}
 
 	if hub, ok := h.hub.(interface {

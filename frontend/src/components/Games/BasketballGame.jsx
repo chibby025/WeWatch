@@ -1,144 +1,124 @@
 // src/components/Games/BasketballGame.jsx
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X } from 'lucide-react';
+// Forked from mike007jd/vibebasketball (MIT) — a real Three.js 3D
+// basketball engine, trimmed to a single free-shooting player (no defender,
+// no local AI, no dribble/steal/block resolution — see
+// basketball-engine/game/wwGame.js's own header comment for the full
+// architectural rationale). basketball.go remains the sole authority on
+// make/miss, via a distance+power tolerance formula; this component's only
+// job is capturing the shooter's chosen distance (their live court position)
+// and a continuous power value (derived from the engine's own release-
+// timing accuracy) and replaying whatever the server decides.
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
+import { X, Volume2, VolumeX } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
-
-// Distance labels shown to the player choosing a free shot — purely a UI
-// convenience over the raw 0-1 distance value the backend actually scores
-// against (basketball.go's basketballIdealPower/basketballTolerance).
-const DISTANCE_PRESETS = [
-  { label: 'Layup', value: 0.05 },
-  { label: 'Free Throw', value: 0.35 },
-  { label: 'Mid-Range', value: 0.6 },
-  { label: 'Three-Pointer', value: 0.9 },
-];
-
-function distanceLabel(distance) {
-  let best = DISTANCE_PRESETS[0];
-  let bestDiff = Infinity;
-  for (const p of DISTANCE_PRESETS) {
-    const diff = Math.abs(p.value - distance);
-    if (diff < bestDiff) { bestDiff = diff; best = p; }
-  }
-  return best.label;
-}
+import { WWGame } from './basketball-engine/game/wwGame.js';
+import { CameraRig } from './basketball-engine/game/cameraRig.js';
+import { buildEnvironment } from './basketball-engine/world/environment.js';
 
 const HORSE_WORD = 'HORSE';
 
-function HorseLetters({ letters }) {
-  return (
-    <div className="flex gap-0.5">
-      {HORSE_WORD.split('').map((ch, i) => (
-        <span
-          key={i}
-          className={`w-4 h-4 flex items-center justify-center text-[10px] font-bold rounded ${
-            i < letters.length ? 'bg-red-600 text-white' : 'bg-gray-800 text-gray-600'
-          }`}
-        >
-          {i < letters.length ? ch : ''}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-// Court geometry, shared by the canvas renderer and the position math for
-// the player figure / ball flight — a fixed hoop on the right, player
-// standing position interpolated leftward as `distance` grows toward 1.
-const HOOP_X_FRAC = 0.86;
-const HOOP_Y_FRAC = 0.32;
-const PLAYER_NEAR_X_FRAC = 0.72; // distance=0 (layup, right under the hoop)
-const PLAYER_FAR_X_FRAC = 0.08; // distance=1 (full three-point range)
-const GROUND_Y_FRAC = 0.82;
-
-function playerXFrac(distance) {
-  return PLAYER_NEAR_X_FRAC + (PLAYER_FAR_X_FRAC - PLAYER_NEAR_X_FRAC) * distance;
-}
-
-function drawCourt(ctx, w, h) {
-  ctx.fillStyle = '#c9a06a';
-  ctx.fillRect(0, 0, w, h * GROUND_Y_FRAC);
-  ctx.fillStyle = '#8a5a2b';
-  ctx.fillRect(0, h * GROUND_Y_FRAC, w, h - h * GROUND_Y_FRAC);
-  // floor plank lines
-  ctx.strokeStyle = 'rgba(0,0,0,0.08)';
-  ctx.lineWidth = 1;
-  for (let x = 0; x < w; x += 28) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h * GROUND_Y_FRAC);
-    ctx.stroke();
-  }
-
-  // backboard + pole
-  const hoopX = w * HOOP_X_FRAC;
-  const hoopY = h * HOOP_Y_FRAC;
-  ctx.fillStyle = '#e8e4d8';
-  ctx.fillRect(hoopX + 18, hoopY - 45, 8, 90);
-  ctx.strokeStyle = '#333';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(hoopX + 18, hoopY - 45, 8, 90);
-  ctx.fillStyle = '#555';
-  ctx.fillRect(hoopX + 24, hoopY - 20, 10, h * GROUND_Y_FRAC - hoopY + 20);
-
-  // rim
-  ctx.strokeStyle = '#e8791f';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.ellipse(hoopX, hoopY, 20, 6, 0, 0, Math.PI * 2);
-  ctx.stroke();
-  // net (simple crosshatch)
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-  ctx.lineWidth = 1;
-  for (let i = -3; i <= 3; i++) {
-    ctx.beginPath();
-    ctx.moveTo(hoopX + i * 6, hoopY + 2);
-    ctx.lineTo(hoopX + i * 3, hoopY + 26);
-    ctx.stroke();
+// navigator.vibrate feature-detected — Safari/iOS has no Vibration API at
+// all. Same convention already established in Ping Pong/Air Hockey/Archery.
+function hapticImpact(pattern) {
+  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+    navigator.vibrate(pattern);
   }
 }
 
-function drawPlayerFigure(ctx, x, groundY, color) {
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(x, groundY - 46, 7, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(x, groundY - 39);
-  ctx.lineTo(x, groundY - 14);
-  ctx.stroke();
-  // legs
-  ctx.beginPath();
-  ctx.moveTo(x, groundY - 14);
-  ctx.lineTo(x - 6, groundY);
-  ctx.moveTo(x, groundY - 14);
-  ctx.lineTo(x + 6, groundY);
-  ctx.stroke();
-  // arms raised (shooting pose)
-  ctx.beginPath();
-  ctx.moveTo(x, groundY - 34);
-  ctx.lineTo(x + 10, groundY - 50);
-  ctx.stroke();
+// Synthesized swish/miss cue, layered on top of the engine's own rim/board/
+// dribble SFX (CourtSfx, ported unchanged) — a distinct "the SERVER just
+// confirmed this" sting, mirroring Darts/Archery's own playHitSound.
+function playResultSound(made, enabled) {
+  if (!enabled || typeof window === 'undefined') return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = made ? 'triangle' : 'sine';
+    oscillator.frequency.setValueAtTime(made ? 520 : 140, context.currentTime);
+    if (made) oscillator.frequency.exponentialRampToValueAtTime(720, context.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + (made ? 0.28 : 0.16));
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.3);
+    setTimeout(() => context.close(), 400);
+  } catch {
+    /* ignore — sound is a pure nicety */
+  }
 }
+
+// Dispatches a real DOM KeyboardEvent on window — input.js (the ported
+// engine's own singleton input handler) listens there and reads e.code,
+// making this indistinguishable from an actual key press. The engine has
+// zero touch/pointer support of its own (confirmed by reading input.js in
+// full), so this is the only way to make it playable on mobile without
+// touching any of its input logic.
+function pressKey(code) { window.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true })); }
+function releaseKey(code) { window.dispatchEvent(new KeyboardEvent('keyup', { code, bubbles: true })); }
+
+const isTouchDevice = () => (typeof window !== 'undefined') && ('ontouchstart' in window) && navigator.maxTouchPoints > 0;
+
+// Live shot relay — mirrors BowlingGame.jsx's own throw_progress mechanism
+// (same ~10Hz cadence, same "sender never renders it, only the receiving
+// spectator's stale-check matters" shape), scaled down since basketball has
+// no parallel spectator 3D scene to drive — just enough to answer "not
+// broadcast in real time when clicked": a spectator now sees the actual
+// shot arc rise and fall live, not just a static waiting screen until the
+// server's result lands a beat later.
+const PROGRESS_SEND_EVERY_FRAMES = 6; // ~10Hz @ 60fps
+const RELAY_STALE_MS = 700; // a bit more forgiving than a fixed-cadence 3D relay — this is a coarse height cue, not physics
+const RELAY_HEIGHT_MAX = 5; // meters — normalizes Ball.pos.y into a 0-100% vertical position for the CSS indicator below
+const SHOT_SETTLE_GRACE_MS = 900; // let the ball's landing / result label read for a beat before letting go
+const SHOT_HOLD_SAFETY_CAP_MS = 6000; // backstop only — in case ball.state never leaves 'shot' for some reason
 
 export default function BasketballGame({ gameState, players = [], currentUserId, onMove, onClose, onEndGame, onPostResult }) {
-  const canvasRef = useRef(null);
-  const flyingBallRef = useRef(null);
+  const mountRef = useRef(null);
+  const wwGameRef = useRef(null);
+  const soundEnabledRef = useRef(true);
   const lastResultKeyRef = useRef(null);
 
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    try { return localStorage.getItem('basketball_sound_enabled') !== 'false'; } catch { return true; }
+  });
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+    try { localStorage.setItem('basketball_sound_enabled', String(soundEnabled)); } catch { /* ignore */ }
+  }, [soundEnabled]);
+
+  const [meter, setMeter] = useState(null);
+  const [lastHitLabel, setLastHitLabel] = useState(null);
+  const lastHitLabelTimerRef = useRef(null);
+  useEffect(() => () => { if (lastHitLabelTimerRef.current) clearTimeout(lastHitLabelTimerRef.current); }, []);
+
   const gs = gameState?.game_state || {};
-  const lettersMap = gs.letters || {};
-  // gs.eliminated is a fresh object reference on any render where it's
-  // absent (`|| {}` allocating a new literal each time) — memoized here so
-  // the useMemo below it doesn't recompute on every render regardless of
-  // whether the underlying data actually changed.
-  const eliminatedMap = useMemo(() => gs.eliminated || {}, [gs.eliminated]);
+  const letters = useMemo(() => gs.letters || {}, [gs.letters]);
+  const eliminated = useMemo(() => gs.eliminated || {}, [gs.eliminated]);
   const hasPendingShot = !!gs.has_pending_shot;
   const setDistance = gs.set_distance ?? 0;
   const lastResult = gs.last_result;
+
+  // Spectator-side live relay indicator — see PROGRESS_SEND_EVERY_FRAMES's
+  // own comment above for the full "why" (answers the "not broadcast in
+  // real time" report). Plain useState + a staleness timeout is enough here
+  // (no rAF loop needed, unlike BowlingGame.jsx's full 3D relay scene) —
+  // this only ever drives one CSS transform on a small 2D indicator.
+  const [relayHeightPct, setRelayHeightPct] = useState(null);
+  const relayStaleTimerRef = useRef(null);
+  useEffect(() => {
+    const ball = gs.shoot_progress?.ball;
+    if (!ball) return;
+    const pct = Math.max(0, Math.min(100, (ball.y / RELAY_HEIGHT_MAX) * 100));
+    setRelayHeightPct(pct);
+    if (relayStaleTimerRef.current) clearTimeout(relayStaleTimerRef.current);
+    relayStaleTimerRef.current = setTimeout(() => setRelayHeightPct(null), RELAY_STALE_MS);
+  }, [gs.shoot_progress]);
+  useEffect(() => () => { if (relayStaleTimerRef.current) clearTimeout(relayStaleTimerRef.current); }, []);
 
   const currentTurn = gameState?.current_turn ?? 0;
   const currentPlayer = players[currentTurn];
@@ -147,142 +127,165 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
   const winner = gameState?.winner_id ? players.find((p) => p.user_id === gameState.winner_id) : null;
   const isOver = ['finished', 'forfeited', 'completed'].includes(gameState?.status);
 
-  const activePlayers = useMemo(
-    () => players.filter((p) => !eliminatedMap[String(p.user_id)]),
-    [players, eliminatedMap],
-  );
-
-  const [freeDistance, setFreeDistance] = useState(0.35);
-  const [charging, setCharging] = useState(false);
-  const [displayPower, setDisplayPower] = useState(0);
-  const chargeStartRef = useRef(0);
-
-  const effectiveDistance = hasPendingShot ? setDistance : freeDistance;
-
-  // ── Canvas render loop ───────────────────────────────────────────────
+  // ── Keep the scene mounted through a shot's release/arc/net animation ──
+  // The engine deliberately PAUSES a shooter's release at the top of their
+  // motion (see player.js's WeWatch bridge block) until resolveServerShot()
+  // is called — which only happens once game_state_update delivers
+  // last_result, in the very same broadcast that also flips isMyTurn to
+  // false (turn passes) or isOver to true (game-ending shot). Tearing the
+  // scene down on that same commit — which the old `!isMyTurn || isOver`
+  // gate below did — killed the RAF loop before the now-just-unblocked
+  // release/arc/rim-or-net animation had any chance to actually play.
+  //
+  // `holdSceneOpen` is flagged the instant OUR new result appears, via a
+  // direct state adjustment during render (not inside a useEffect) — React
+  // re-renders with the corrected value before any effect ever runs, so
+  // there's no cross-effect ordering/race to get wrong here (a plain
+  // useState set from a sibling effect would NOT be visible to another
+  // effect in that same commit, since each effect's closure is captured at
+  // render time).
+  const [holdSceneOpen, setHoldSceneOpen] = useState(false);
+  const lastResultKeyForHoldRef = useRef(null);
+  if (lastResult?.made != null && lastResult.shooter_id === currentUserId) {
+    const holdKey = `${lastResult.shooter_id}-${lastResult.distance}-${lastResult.power}-${lastResult.made}`;
+    if (lastResultKeyForHoldRef.current !== holdKey) {
+      lastResultKeyForHoldRef.current = holdKey;
+      if (!holdSceneOpen) setHoldSceneOpen(true);
+    }
+  }
+  // Safety-cap backstop only — the real close trigger lives inside the RAF
+  // loop below (fires once ball.state genuinely leaves 'shot', i.e. the
+  // ball has actually landed), this just guarantees the scene can never get
+  // stuck mounted forever if that never happens for some reason.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return undefined;
-    const ctx = canvas.getContext('2d');
+    if (!holdSceneOpen) return undefined;
+    const t = setTimeout(() => setHoldSceneOpen(false), SHOT_HOLD_SAFETY_CAP_MS);
+    return () => clearTimeout(t);
+  }, [holdSceneOpen]);
+
+  const showCanvasScene = holdSceneOpen || (isMyTurn && !isOver);
+
+  const handleShootAttempt = useCallback(({ distance, power }) => {
+    onMove({ move_type: 'shoot', distance, power });
+  }, [onMove]);
+
+  // ── Three.js scene + WWGame setup — rebuilt whenever it becomes this
+  // player's own turn (mirrors BowlingGame.jsx's identical "only the active
+  // thrower's device runs the engine" lifecycle), and now also kept mounted
+  // through showCanvasScene's hold window so a just-released shot's
+  // animation can finish (see above). ───────────────────────────────────
+  useEffect(() => {
+    if (!showCanvasScene) return undefined;
+    const mount = mountRef.current;
+    if (!mount) return undefined;
+
+    const scene = new THREE.Scene();
+    const width = mount.clientWidth || 1, height = mount.clientHeight || 1;
+    const camera = new THREE.PerspectiveCamera(46, width / height, 0.1, 100);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.shadowMap.enabled = true;
+    mount.appendChild(renderer.domElement);
+
+    buildEnvironment(scene, renderer);
+
+    const wwGame = new WWGame(scene, {
+      onShootAttempt: handleShootAttempt,
+      onShotMeterUpdate: setMeter,
+    });
+    wwGame.cameraRig = new CameraRig(camera);
+    wwGameRef.current = wwGame;
+
     let raf;
+    let progressFrameCount = 0;
+    let sawShotState = false;
+    let closeTimer = null;
+    const clock = new THREE.Clock();
+    const animate = () => {
+      raf = requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      wwGame.update(dt);
+      renderer.render(scene, camera);
 
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width * (window.devicePixelRatio || 1);
-      canvas.height = rect.height * (window.devicePixelRatio || 1);
-      ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const render = () => {
-      raf = requestAnimationFrame(render);
-      const rect = canvas.getBoundingClientRect();
-      const w = rect.width, h = rect.height;
-      drawCourt(ctx, w, h);
-
-      const hoopX = w * HOOP_X_FRAC, hoopY = h * HOOP_Y_FRAC;
-      const playerX = w * playerXFrac(effectiveDistance);
-      const groundY = h * GROUND_Y_FRAC;
-      drawPlayerFigure(ctx, playerX, groundY, isMyTurn ? '#22c55e' : '#f97316');
-
-      const fb = flyingBallRef.current;
-      if (fb) {
-        const t = Math.min(1, (performance.now() - fb.startTime) / fb.duration);
-        const eased = 1 - Math.pow(1 - t, 2);
-        const bx = fb.fromX + (fb.toX - fb.fromX) * eased;
-        const arcHeight = fb.made ? 0 : fb.missOffsetY;
-        const by = fb.fromY + (fb.toY - fb.fromY) * eased - Math.sin(eased * Math.PI) * (h * 0.32) + arcHeight * eased;
-        ctx.fillStyle = '#e8791f';
-        ctx.beginPath();
-        ctx.arc(bx, by, 8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#7a3d0f';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        if (t >= 1) {
-          flyingBallRef.current = null;
+      // Live relay: only while the ball is actually airborne after a real
+      // release (Ball.state === 'shot' — set by Ball.shoot()/shootDunk() in
+      // ball.js). Never fires for a held/dribbled ball, so a spectator's
+      // indicator only ever appears for the part of the action that's
+      // actually a "shot" — matching what the placeholder text already says.
+      if (wwGame.ball?.state === 'shot') {
+        progressFrameCount += 1;
+        if (progressFrameCount >= PROGRESS_SEND_EVERY_FRAMES) {
+          progressFrameCount = 0;
+          const p = wwGame.ball.pos;
+          onMove({ move_type: 'shoot_progress', ball: { x: p.x, y: p.y, z: p.z } });
         }
+        sawShotState = true;
       } else {
-        // Resting ball in the player's hands.
-        ctx.fillStyle = '#e8791f';
-        ctx.beginPath();
-        ctx.arc(playerX + 10, groundY - 50, 7, 0, Math.PI * 2);
-        ctx.fill();
+        progressFrameCount = 0;
+        // The shot has fully played out — ball.js only leaves 'shot' once
+        // the ball actually lands (rim miss bouncing to the floor, or a
+        // make falling through the net and landing) — see ball.js's floor
+        // -bounce branch. Let go of the hold a beat later so the result
+        // has a moment to read; a no-op if isMyTurn alone already keeps
+        // the scene open (shooter made it and gets to keep shooting).
+        if (sawShotState && !closeTimer) {
+          closeTimer = setTimeout(() => setHoldSceneOpen(false), SHOT_SETTLE_GRACE_MS);
+        }
       }
-      void hoopX; void hoopY;
     };
-    render();
+    animate();
+
+    const handleResize = () => {
+      const w = mount.clientWidth || 1, h = mount.clientHeight || 1;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+    window.addEventListener('resize', handleResize);
 
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener('resize', resize);
+      if (closeTimer) clearTimeout(closeTimer);
+      window.removeEventListener('resize', handleResize);
+      renderer.dispose();
+      if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
+      wwGameRef.current = null;
     };
-  }, [effectiveDistance, isMyTurn]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showCanvasScene]);
 
-  // ── Animate the most recent confirmed shot result ────────────────────
+  // ── Deliver the server's confirmed result to the engine the instant it
+  // broadcasts, regardless of whose local UI triggered it — every connected
+  // client (not just the shooter) receives game_state_update, but only the
+  // shooter's own device has an active WWGame instance waiting on it. ─────
   useEffect(() => {
-    if (!lastResult) return;
-    const key = `${lastResult.shooter_id}-${lastResult.distance}-${lastResult.power}`;
+    if (!lastResult || lastResult.made == null) return;
+    const key = `${lastResult.shooter_id}-${lastResult.distance}-${lastResult.power}-${lastResult.made}`;
     if (lastResultKeyRef.current === key) return;
     lastResultKeyRef.current = key;
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const w = rect.width, h = rect.height;
-    const fromX = w * playerXFrac(lastResult.distance) + 10;
-    const fromY = h * GROUND_Y_FRAC - 50;
-    const toX = lastResult.made ? w * HOOP_X_FRAC : w * HOOP_X_FRAC + (Math.random() > 0.5 ? 22 : -22);
-    const toY = h * HOOP_Y_FRAC;
-    flyingBallRef.current = {
-      fromX, fromY, toX, toY,
-      made: lastResult.made,
-      missOffsetY: lastResult.made ? 0 : (Math.random() > 0.5 ? -30 : 40),
-      startTime: performance.now(),
-      duration: 650,
-    };
-  }, [lastResult]);
-
-  const CHARGE_PERIOD_MS = 850;
-  const readTrianglePower = useCallback((elapsedMs) => {
-    const phase = (elapsedMs % CHARGE_PERIOD_MS) / CHARGE_PERIOD_MS;
-    return phase < 0.5 ? phase * 2 : (1 - phase) * 2;
-  }, []);
-
-  const startCharge = useCallback(() => {
-    if (!isMyTurn || isOver) return;
-    setCharging(true);
-    chargeStartRef.current = performance.now();
-  }, [isMyTurn, isOver]);
-
-  const releaseCharge = useCallback(() => {
-    setCharging((wasCharging) => {
-      if (!wasCharging) return false;
-      const elapsed = performance.now() - chargeStartRef.current;
-      const power = readTrianglePower(elapsed);
-      const moveData = { move_type: 'shoot', power };
-      if (!hasPendingShot) moveData.distance = freeDistance;
-      onMove(moveData);
-      return false;
-    });
-  }, [hasPendingShot, freeDistance, onMove, readTrianglePower]);
-
-  useEffect(() => {
-    if (!charging) { setDisplayPower(0); return undefined; }
-    let raf;
-    const tick = () => {
-      setDisplayPower(readTrianglePower(performance.now() - chargeStartRef.current));
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [charging, readTrianglePower]);
+    if (lastResult.shooter_id === currentUserId && wwGameRef.current) {
+      wwGameRef.current.resolveServerShot(lastResult.made);
+    }
+    playResultSound(lastResult.made, soundEnabledRef.current);
+    hapticImpact(lastResult.made ? [20, 40, 20] : [10]);
+    setLastHitLabel(lastResult.made ? 'SWISH!' : 'MISS');
+    if (lastHitLabelTimerRef.current) clearTimeout(lastHitLabelTimerRef.current);
+    lastHitLabelTimerRef.current = setTimeout(() => setLastHitLabel(null), 1600);
+  }, [lastResult, currentUserId]);
 
   const handleForfeit = () => {
     if (winner || isOver) { onClose(); return; }
     (onEndGame || onClose)();
   };
+
+  const sortedPlayers = useMemo(
+    () => [...players].sort((a, b) => (letters[String(a.user_id)]?.length ?? 0) - (letters[String(b.user_id)]?.length ?? 0)),
+    [players, letters],
+  );
+
+  const touch = isTouchDevice();
 
   return (
     <>
@@ -290,89 +293,125 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
         <div className="relative bg-gray-900 rounded-2xl shadow-2xl w-full max-w-3xl mx-4 overflow-hidden flex flex-col" style={{ maxHeight: '92vh' }}>
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800 shrink-0">
             <div>
-              <h2 className="text-white text-xl font-bold">Basketball H.O.R.S.E 🏀</h2>
-              <p className="text-gray-400 text-sm">{activePlayers.length} still in it</p>
+              <h2 className="text-white text-xl font-bold">Basketball — H.O.R.S.E 🏀</h2>
+              <p className="text-gray-400 text-sm">
+                {hasPendingShot ? `Match the shot — ${Math.round(setDistance * 100)}% to the arc` : 'Free shot — pick your spot'}
+              </p>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setSoundEnabled((v) => !v)}
+                className="text-gray-400 hover:text-white"
+                title={soundEnabled ? 'Mute sounds' : 'Unmute sounds'}
+              >
+                {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+              </button>
               <GameRulesButton gameType="basketball" />
-              <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'Forfeit'}>
+              <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'End Game'}>
                 <X className="w-6 h-6" />
               </button>
             </div>
           </div>
 
           <div className="flex items-center justify-center gap-3 px-5 py-2.5 flex-wrap shrink-0 border-b border-gray-800">
-            {players.map((p) => {
-              const eliminated = !!eliminatedMap[String(p.user_id)];
+            {sortedPlayers.map((p) => {
+              const word = letters[String(p.user_id)] || '';
+              const isElim = !!eliminated[String(p.user_id)];
               return (
                 <div
                   key={p.user_id}
-                  className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg ${
-                    currentPlayer?.user_id === p.user_id ? 'bg-purple-900/40 ring-2 ring-purple-500' : 'bg-gray-800/50'
-                  } ${eliminated ? 'opacity-40' : ''}`}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${
+                    isElim ? 'bg-gray-800/30 opacity-50' : currentPlayer?.user_id === p.user_id ? 'bg-purple-900/40 ring-2 ring-purple-500' : 'bg-gray-800/50'
+                  }`}
                 >
-                  <span className="text-white text-sm font-medium">{p.username}{eliminated ? ' (out)' : ''}</span>
-                  <HorseLetters letters={lettersMap[String(p.user_id)] || ''} />
+                  <span className="text-white text-sm font-medium">{p.username}</span>
+                  <span className="font-mono text-xs tracking-widest">
+                    {HORSE_WORD.split('').map((ch, i) => (
+                      <span key={i} className={i < word.length ? 'text-red-400 font-bold' : 'text-gray-600'}>{ch}</span>
+                    ))}
+                  </span>
                 </div>
               );
             })}
           </div>
 
-          {!isOver && (
-            <div className="text-center py-1.5 shrink-0">
-              <p className={`text-sm font-medium ${isMyTurn ? 'text-green-400' : 'text-gray-400'}`}>
-                {isMyTurn
-                  ? hasPendingShot
-                    ? `Your turn — MATCH the ${distanceLabel(setDistance)} shot!`
-                    : 'Your turn — choose a shot and take it!'
-                  : hasPendingShot
-                    ? `${currentPlayer?.username || 'Opponent'} is matching the ${distanceLabel(setDistance)} shot…`
-                    : `${currentPlayer?.username || 'Opponent'}'s turn`}
-              </p>
-            </div>
-          )}
-
-          <div className="relative flex-1 min-h-[280px]">
-            <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+          <div className="relative flex-1 min-h-[320px]">
+            {showCanvasScene ? (
+              <div ref={mountRef} className="absolute inset-0" />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-400 overflow-hidden">
+                {relayHeightPct != null ? (
+                  // Live shot in flight — a real, near-real-time rise/fall cue
+                  // rather than a static waiting screen. Deliberately coarse
+                  // (height only, no 3D re-simulation) — this is a spectator
+                  // convenience, not a claim of matching the shooter's exact
+                  // physics; the actual make/miss result still comes from the
+                  // server-authoritative "shoot" move alone.
+                  <div className="relative w-full h-full">
+                    <span
+                      className="absolute left-1/2 text-4xl transition-[bottom] duration-150 ease-linear"
+                      style={{ bottom: `${relayHeightPct}%`, transform: 'translateX(-50%)' }}
+                    >
+                      🏀
+                    </span>
+                    <p className="absolute bottom-3 left-1/2 -translate-x-1/2 text-sm whitespace-nowrap">
+                      {currentPlayer?.username || 'Opponent'}&apos;s shot is in the air…
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <span className="text-5xl">🏀</span>
+                    {!isOver && <p className="text-sm">{currentPlayer?.username || 'Opponent'} is shooting…</p>}
+                  </>
+                )}
+              </div>
+            )}
+            {lastHitLabel && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/70 text-yellow-400 font-bold text-sm">
+                {lastHitLabel}
+              </div>
+            )}
           </div>
 
           {isMyTurn && !isOver && (
             <div className="px-5 pb-4 pt-2 shrink-0">
-              {!hasPendingShot && (
-                <div className="flex justify-center gap-2 mb-3">
-                  {DISTANCE_PRESETS.map((p) => (
-                    <button
-                      key={p.label}
-                      onClick={() => setFreeDistance(p.value)}
-                      disabled={charging}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${
-                        Math.abs(freeDistance - p.value) < 0.01
-                          ? 'bg-orange-600 border-orange-400 text-white'
-                          : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
+              <div className="relative h-4 bg-gray-800 rounded-full overflow-hidden border border-gray-700 mb-3">
+                {meter && (
+                  <>
+                    <div
+                      className="absolute inset-y-0 bg-green-500/40"
+                      style={{ left: `${clampPct(meter.stable0)}%`, width: `${clampPct(meter.stable1 - meter.stable0)}%` }}
+                    />
+                    <div
+                      className="absolute inset-y-0 bg-green-400"
+                      style={{ left: `${clampPct(meter.green0)}%`, width: `${clampPct(meter.green1 - meter.green0)}%` }}
+                    />
+                    <div
+                      className="absolute inset-y-0 bg-yellow-300"
+                      style={{ left: `${clampPct(meter.progress) - 0.5}%`, width: '3px' }}
+                    />
+                  </>
+                )}
+              </div>
+              {touch && (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="grid grid-cols-3 gap-1 w-32">
+                    <div />
+                    <TouchBtn code="KeyW" label="↑" />
+                    <div />
+                    <TouchBtn code="KeyA" label="←" />
+                    <div />
+                    <TouchBtn code="KeyD" label="→" />
+                    <div />
+                    <TouchBtn code="KeyS" label="↓" />
+                    <div />
+                  </div>
+                  <TouchBtn code="Space" label="SHOOT" wide />
                 </div>
               )}
-              <p className="text-center text-xs text-gray-400 mb-1.5">
-                {hasPendingShot ? `Matching: ${distanceLabel(setDistance)}` : `Aiming: ${distanceLabel(freeDistance)}`} — hold to charge power, release to shoot
-              </p>
-              <div className="relative h-5 bg-gray-800 rounded-full overflow-hidden border border-gray-700">
-                <div
-                  className="absolute inset-y-0 left-0 bg-gradient-to-r from-yellow-500 to-orange-600"
-                  style={{ width: `${(charging ? displayPower : 0) * 100}%` }}
-                />
-              </div>
-              <button
-                onPointerDown={startCharge}
-                onPointerUp={releaseCharge}
-                onPointerLeave={() => { if (charging) releaseCharge(); }}
-                className="mt-3 w-full py-2.5 rounded-lg bg-orange-600 hover:bg-orange-500 active:bg-orange-700 text-white font-bold text-sm select-none"
-              >
-                {charging ? 'Release to Shoot!' : 'Hold to Charge'}
-              </button>
+              {!touch && (
+                <p className="text-center text-xs text-gray-500">WASD to move · hold Space to charge, release to shoot</p>
+              )}
             </div>
           )}
 
@@ -383,7 +422,7 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
           {!isOver && (
             <div className="flex justify-end px-5 pb-4 shrink-0">
               <button onClick={handleForfeit} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
-                Forfeit
+                End Game
               </button>
             </div>
           )}
@@ -395,12 +434,31 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
           winner={winner}
           players={players}
           gameType="basketball"
-          gameStats={{ lines: players.map((p) => ({ label: p.username, value: lettersMap[String(p.user_id)] || '—' })) }}
+          gameStats={{ lines: players.map((p) => ({ label: p.username, value: `${letters[String(p.user_id)] || '(clean)'}` })) }}
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
         />
       )}
     </>
+  );
+}
+
+function clampPct(v) {
+  if (v == null || Number.isNaN(v)) return 0;
+  return Math.max(0, Math.min(100, v * 100));
+}
+
+function TouchBtn({ code, label, wide }) {
+  return (
+    <button
+      onPointerDown={(e) => { e.preventDefault(); pressKey(code); }}
+      onPointerUp={(e) => { e.preventDefault(); releaseKey(code); }}
+      onPointerLeave={() => releaseKey(code)}
+      className={`select-none rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white font-bold flex items-center justify-center ${wide ? 'px-6 py-4 text-sm' : 'h-9 text-sm'}`}
+      style={{ touchAction: 'none' }}
+    >
+      {label}
+    </button>
   );
 }

@@ -1,7 +1,7 @@
 // src/components/Games/ArcheryGame.jsx
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import * as THREE from 'three';
-import { X } from 'lucide-react';
+import { X, Volume2, VolumeX } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
 
@@ -13,8 +13,13 @@ const ROUNDS = 3;
 const ARROWS_PER_TURN = 3;
 const WIND_STRENGTH = 0.22;
 
-const CAMERA_FOV_DEG = 45;
-const CAMERA_DISTANCE = 6;
+// Oblique angle + wide FOV + closer distance — the same fix already proven
+// on DartboardScene.jsx: a near-head-on camera + narrow FOV on a flat target
+// gives almost no visible depth cue in a static frame, even though the scene
+// is genuinely 3D underneath. Reusing the exact same tuned direction vector.
+const CAMERA_DIR = new THREE.Vector3(0.28, 0.62, 0.74).normalize();
+const CAMERA_FOV_DEG = 58;
+const CAMERA_DISTANCE = 4.4;
 const TARGET_RADIUS = 1.9;
 const RING_CONTENT_FRACTION = 0.9; // see DartsGame.jsx's own comment on THREE.CircleGeometry clipping — same fix applied here proactively
 
@@ -35,13 +40,6 @@ function scoreAt(x, y) {
   if (ring < 1) ring = 1;
   if (ring > 10) ring = 10;
   return { score: 11 - ring, label: `${11 - ring}` };
-}
-
-function boardPixelRadius(viewportHeightPx) {
-  const fovRad = (CAMERA_FOV_DEG * Math.PI) / 180;
-  const worldVisibleHeight = 2 * CAMERA_DISTANCE * Math.tan(fovRad / 2);
-  const pixelsPerWorldUnit = viewportHeightPx / worldVisibleHeight;
-  return TARGET_RADIUS * pixelsPerWorldUnit;
 }
 
 // Procedurally draws the real 10-ring World Archery target face.
@@ -108,11 +106,102 @@ function WindIndicator({ wind }) {
   );
 }
 
+// navigator.vibrate feature-detected — Safari/iOS has no Vibration API at
+// all. Deliberately independent of the sound-mute toggle, same convention
+// already established in PingPongGame.jsx/AirHockeyGame.jsx.
+function hapticImpact(pattern) {
+  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+    navigator.vibrate(pattern);
+  }
+}
+
+// Synthesized bowstring "twang" release sound — a bright, quick pitch-drop
+// pluck, higher/brighter for a harder-charged shot. No external audio asset
+// needed, same convention DartsGame.jsx already established for this game
+// family (forked originally from dart-room's own playHitSound approach).
+function playReleaseSound(power, enabled) {
+  if (!enabled || typeof window === 'undefined') return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'triangle';
+    const startFreq = 340 + power * 260;
+    oscillator.frequency.setValueAtTime(startFreq, context.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(startFreq * 0.55, context.currentTime + 0.09);
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.14, context.currentTime + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.14);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.16);
+    setTimeout(() => context.close(), 260);
+  } catch {
+    /* ignore — sound is a pure nicety */
+  }
+}
+
+// Synthesized arrow-impact thud/thwack, pitch/timbre scaled by score —
+// mirrors DartsGame.jsx's own playHitSound shape exactly.
+function playArrowHitSound(hit, enabled) {
+  if (!enabled || typeof window === 'undefined') return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = hit.score >= 9 ? 'triangle' : 'sine';
+    oscillator.frequency.setValueAtTime(hit.score === 0 ? 85 : 150 + hit.score * 14, context.currentTime);
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.13, context.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.2);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.22);
+    setTimeout(() => context.close(), 320);
+  } catch {
+    /* ignore — sound is a pure nicety */
+  }
+}
+
 export default function ArcheryGame({ gameState, players = [], currentUserId, onMove, onClose, onEndGame, onPostResult }) {
   const mountRef = useRef(null);
   const arrowGroupRef = useRef(null);
   const arrowAssetsRef = useRef(null);
   const flyingArrowRef = useRef(null);
+  // Raycasting-based aim mapping (camera-angle-agnostic) — needed once the
+  // camera stopped looking straight down the Z axis; a bare screen-pixel
+  // scalar formula only ever produced a correct result for a perfectly
+  // frontal camera, same lesson learned porting DartboardScene.jsx.
+  const cameraRef = useRef(null);
+  const raycasterRef = useRef(null);
+  const targetPlaneRef = useRef(null);
+  const ndcVecRef = useRef(null);
+  const intersectPointRef = useRef(null);
+  // Persistent AudioContext + the sustained draw-tension oscillator/gain
+  // (held across the whole charge, not a one-shot blip like the release/hit
+  // sounds) plus a ref-held callback so the scene's once-created animate()
+  // loop can call the latest "arrow landed" handler without needing it in
+  // its own effect's dependency array.
+  const audioCtxRef = useRef(null);
+  const drawOscRef = useRef(null);
+  const drawGainRef = useRef(null);
+  const isChargingRef = useRef(false);
+  const onArrowLandRef = useRef(null);
+
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    try { return localStorage.getItem('archery_sound_enabled') !== 'false'; } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('archery_sound_enabled', String(soundEnabled)); } catch { /* ignore */ }
+  }, [soundEnabled]);
+
+  const [lastHitLabel, setLastHitLabel] = useState(null);
+  const lastHitLabelTimerRef = useRef(null);
+  useEffect(() => () => { if (lastHitLabelTimerRef.current) clearTimeout(lastHitLabelTimerRef.current); }, []);
 
   const gs = gameState?.game_state || {};
   // gs.scores is a fresh object reference on any render where it's absent
@@ -148,8 +237,13 @@ export default function ArcheryGame({ gameState, players = [], currentUserId, on
 
     const width = mount.clientWidth || 1, height = mount.clientHeight || 1;
     const camera = new THREE.PerspectiveCamera(CAMERA_FOV_DEG, width / height, 0.1, 100);
-    camera.position.set(0, 0, CAMERA_DISTANCE);
+    camera.position.copy(CAMERA_DIR).multiplyScalar(CAMERA_DISTANCE);
     camera.lookAt(0, 0, 0);
+    cameraRef.current = camera;
+    raycasterRef.current = new THREE.Raycaster();
+    targetPlaneRef.current = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    ndcVecRef.current = new THREE.Vector2();
+    intersectPointRef.current = new THREE.Vector3();
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(width, height);
@@ -194,7 +288,10 @@ export default function ArcheryGame({ gameState, players = [], currentUserId, on
         const eased = 1 - Math.pow(1 - t, 3);
         fa.mesh.position.lerpVectors(fa.from, fa.to, eased);
         fa.mesh.position.z += Math.sin(t * Math.PI) * fa.arcHeight;
-        if (t >= 1) flyingArrowRef.current = null;
+        if (t >= 1) {
+          flyingArrowRef.current = null;
+          onArrowLandRef.current?.(fa.hitInfo);
+        }
       }
       renderer.render(scene, camera);
     };
@@ -203,6 +300,12 @@ export default function ArcheryGame({ gameState, players = [], currentUserId, on
     const handleResize = () => {
       const w = mount.clientWidth || 1, h = mount.clientHeight || 1;
       camera.aspect = w / h;
+      // Pull the camera in on a narrow (portrait/mobile) viewport so the
+      // target stays reasonably framed instead of shrinking away — mirrors
+      // DartboardScene.jsx's own resize-time distance adjustment.
+      const distance = Math.max(CAMERA_DISTANCE, (CAMERA_DISTANCE - 0.5) / Math.max(0.7, camera.aspect));
+      camera.position.copy(CAMERA_DIR).multiplyScalar(distance);
+      camera.lookAt(0, 0, 0);
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };
@@ -221,8 +324,20 @@ export default function ArcheryGame({ gameState, players = [], currentUserId, on
       arrowMat.dispose();
       arrowAssetsRef.current = null;
       flyingArrowRef.current = null;
+      cameraRef.current = null;
+      raycasterRef.current = null;
+      targetPlaneRef.current = null;
+      ndcVecRef.current = null;
+      intersectPointRef.current = null;
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
     };
+  }, []);
+
+  // Stop any lingering draw-tension oscillator and close the shared audio
+  // context on unmount — covers the game closing mid-charge.
+  useEffect(() => () => {
+    if (drawOscRef.current) { try { drawOscRef.current.stop(); } catch { /* ignore */ } }
+    if (audioCtxRef.current) { try { audioCtxRef.current.close(); } catch { /* ignore */ } }
   }, []);
 
   // ── Render already-stuck arrows for the in-progress turn ─────────────
@@ -262,20 +377,44 @@ export default function ArcheryGame({ gameState, players = [], currentUserId, on
     const from = new THREE.Vector3(0, -1.3, 4.5);
     mesh.position.copy(from);
     group.add(mesh);
-    flyingArrowRef.current = { mesh, from, to, startTime: performance.now(), duration: 420, arcHeight: 0.2 };
+    flyingArrowRef.current = { mesh, from, to, startTime: performance.now(), duration: 420, arcHeight: 0.2, hitInfo: lastShot };
   }, [lastShot]);
+
+  // Fires the impact sound/haptic/flash exactly when the arrow visually
+  // lands (called from the scene's own animate() loop via onArrowLandRef,
+  // not at the moment the throw is confirmed) — mirrors DartsGame.jsx's
+  // onHit timing exactly.
+  const handleArrowLand = useCallback((hit) => {
+    if (!hit) return;
+    playArrowHitSound(hit, soundEnabled);
+    hapticImpact(hit.score >= 9 ? [20, 40, 20] : hit.score > 0 ? [15] : [8]);
+    setLastHitLabel(hit.score > 0 ? `${hit.score} pts!` : 'MISS');
+    if (lastHitLabelTimerRef.current) clearTimeout(lastHitLabelTimerRef.current);
+    lastHitLabelTimerRef.current = setTimeout(() => setLastHitLabel(null), 1800);
+  }, [soundEnabled]);
+  useEffect(() => { onArrowLandRef.current = handleArrowLand; }, [handleArrowLand]);
 
   const previewScore = useMemo(() => scoreAt(aim.x, aim.y), [aim]);
 
   const handleAimDrag = useCallback((clientX, clientY) => {
     const mount = mountRef.current;
-    if (!mount) return;
+    const camera = cameraRef.current;
+    const raycaster = raycasterRef.current;
+    const plane = targetPlaneRef.current;
+    const ndc = ndcVecRef.current;
+    const intersection = intersectPointRef.current;
+    if (!mount || !camera || !raycaster || !plane || !ndc || !intersection) return;
     const rect = mount.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const radiusPx = boardPixelRadius(rect.height) * RING_CONTENT_FRACTION;
-    let nx = (clientX - cx) / radiusPx;
-    let ny = -(clientY - cy) / radiusPx;
+    ndc.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -(((clientY - rect.top) / rect.height) * 2 - 1),
+    );
+    raycaster.setFromCamera(ndc, camera);
+    const hit = raycaster.ray.intersectPlane(plane, intersection);
+    if (!hit) return;
+    const boardWorldRadius = TARGET_RADIUS * RING_CONTENT_FRACTION;
+    let nx = hit.x / boardWorldRadius;
+    let ny = hit.y / boardWorldRadius;
     const r = Math.hypot(nx, ny);
     if (r > 1.15) { nx = (nx / r) * 1.15; ny = (ny / r) * 1.15; }
     setAim({ x: nx, y: ny });
@@ -289,24 +428,67 @@ export default function ArcheryGame({ gameState, players = [], currentUserId, on
 
   const startCharge = useCallback(() => {
     if (!isMyTurn || isOver) return;
+    isChargingRef.current = true;
     setCharging(true);
     chargeStartRef.current = performance.now();
-  }, [isMyTurn, isOver]);
+    hapticImpact(10);
+    if (!soundEnabled || typeof window === 'undefined') return;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    try {
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContextClass();
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(90, ctx.currentTime);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 0.05);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      drawOscRef.current = osc;
+      drawGainRef.current = gain;
+    } catch {
+      /* ignore — sound is a pure nicety */
+    }
+  }, [isMyTurn, isOver, soundEnabled]);
 
+  // Was previously calling onMove/side-effects from inside a setCharging
+  // functional updater (a real "setState while rendering" antipattern,
+  // triggers a real React dev warning) — reads/writes isChargingRef instead
+  // so the side effects run as a plain event-handler body.
   const releaseCharge = useCallback(() => {
-    setCharging((wasCharging) => {
-      if (!wasCharging) return false;
-      const elapsed = performance.now() - chargeStartRef.current;
-      onMove({ move_type: 'shoot', aim_x: aim.x, aim_y: aim.y, power: readTrianglePower(elapsed) });
-      return false;
-    });
-  }, [aim, onMove, readTrianglePower]);
+    if (!isChargingRef.current) return;
+    isChargingRef.current = false;
+    setCharging(false);
+    const elapsed = performance.now() - chargeStartRef.current;
+    const power = readTrianglePower(elapsed);
+    onMove({ move_type: 'shoot', aim_x: aim.x, aim_y: aim.y, power });
+
+    if (drawOscRef.current && drawGainRef.current) {
+      const osc = drawOscRef.current, gain = drawGainRef.current;
+      const ctx = osc.context;
+      try {
+        gain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.02);
+        osc.stop(ctx.currentTime + 0.08);
+      } catch { /* ignore */ }
+      drawOscRef.current = null;
+      drawGainRef.current = null;
+    }
+    playReleaseSound(power, soundEnabled);
+    hapticImpact(power > 0.85 ? [15, 30, 15] : [12]);
+  }, [aim, onMove, readTrianglePower, soundEnabled]);
 
   useEffect(() => {
     if (!charging) { setDisplayPower(0); return undefined; }
     let raf;
     const tick = () => {
-      setDisplayPower(readTrianglePower(performance.now() - chargeStartRef.current));
+      const power = readTrianglePower(performance.now() - chargeStartRef.current);
+      setDisplayPower(power);
+      if (drawOscRef.current) {
+        drawOscRef.current.frequency.setTargetAtTime(90 + power * 260, drawOscRef.current.context.currentTime, 0.03);
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -333,6 +515,13 @@ export default function ArcheryGame({ gameState, players = [], currentUserId, on
               <p className="text-gray-400 text-sm">Round {Math.min(currentRound, ROUNDS)} of {ROUNDS}</p>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setSoundEnabled((v) => !v)}
+                className="text-gray-400 hover:text-white"
+                title={soundEnabled ? 'Mute sounds' : 'Unmute sounds'}
+              >
+                {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+              </button>
               <GameRulesButton gameType="archery" />
               <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'Forfeit'}>
                 <X className="w-6 h-6" />
@@ -360,6 +549,7 @@ export default function ArcheryGame({ gameState, players = [], currentUserId, on
                 {isMyTurn ? `Your turn — arrow ${arrowsThisTurn + 1} of ${ARROWS_PER_TURN}` : `${currentPlayer?.username || 'Opponent'}'s turn`}
               </p>
               <WindIndicator wind={wind} />
+              {lastHitLabel && <p className="text-xs text-yellow-400 font-semibold">{lastHitLabel}</p>}
             </div>
           )}
 

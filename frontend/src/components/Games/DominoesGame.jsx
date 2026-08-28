@@ -26,9 +26,13 @@ function tilePips(tile) {
   return a + b;
 }
 
+// Pips are drawn as inset "drilled" dots (a dark radial well + a small
+// bright highlight offset toward the tile's own light source) instead of
+// flat filled circles — real inlaid domino pips read as small carved holes,
+// not printed marks.
 function PipFace({ value, size }) {
   const active = new Set(PIP_LAYOUTS[value] ?? []);
-  const dot = Math.max(3, Math.round(size * 0.16));
+  const dot = Math.max(3, Math.round(size * 0.17));
   return (
     <div
       className="grid grid-cols-3 grid-rows-3 shrink-0"
@@ -37,7 +41,15 @@ function PipFace({ value, size }) {
       {Array.from({ length: 9 }, (_, i) => (
         <div key={i} className="flex items-center justify-center">
           {active.has(i) && (
-            <div className="rounded-full bg-gray-900" style={{ width: dot, height: dot }} />
+            <div
+              className="rounded-full"
+              style={{
+                width: dot,
+                height: dot,
+                background: 'radial-gradient(circle at 35% 30%, #4a4a4a 0%, #1a1a1a 55%, #0a0a0a 100%)',
+                boxShadow: 'inset 0 1px 1px rgba(0,0,0,0.6), 0 0.5px 0 rgba(255,255,255,0.5)',
+              }}
+            />
           )}
         </div>
       ))}
@@ -51,29 +63,61 @@ function PipFace({ value, size }) {
 // to how real dominoes are laid — a deliberate v1 simplification: the chain
 // still lays out as a single straight (wrapping) row rather than the real
 // snaking board layout, which would need real 2D grid-placement logic.
+//
+// CSS-only 3D look (no canvas/WebGL — see the project's own decision to
+// keep this lightweight): an ivory/bone gradient body, a layered box-shadow
+// stack simulating a beveled raised edge (outer drop shadow for lift off
+// the table + an inset highlight along the top-left + an inset shadow along
+// the bottom-right), a carved center groove instead of a flat divider line,
+// and a subtle constant perspective tilt so the tile reads as a physical
+// object lying on a table rather than a flat icon. Selecting/hovering an
+// interactive tile deepens the tilt and lift, like actually picking it up.
 function DominoTile({ left, right, size = 30, onClick, selected, dimmed, faceDown, isDouble }) {
   if (faceDown) {
     return (
       <div
-        className="rounded-md bg-gradient-to-br from-amber-700 to-amber-900 border-2 border-amber-500/30 shrink-0"
-        style={{ width: size * 0.85, height: size * 1.7 }}
+        className="rounded-md shrink-0"
+        style={{
+          width: size * 0.85,
+          height: size * 1.7,
+          background: 'linear-gradient(135deg, #b87f42 0%, #8a5a28 45%, #6b431a 100%)',
+          border: '1px solid rgba(0,0,0,0.35)',
+          boxShadow: `
+            0 ${size * 0.08}px ${size * 0.14}px rgba(0,0,0,0.5),
+            inset 0 1px 0 rgba(255,255,255,0.25),
+            inset 0 -2px 3px rgba(0,0,0,0.35)
+          `,
+          transform: 'perspective(300px) rotateX(6deg)',
+        }}
       />
     );
   }
+  const tilt = selected ? 'perspective(500px) rotateX(14deg) translateY(-8px)' : 'perspective(500px) rotateX(8deg)';
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={!onClick}
-      className={`flex items-stretch bg-white rounded-md border-2 shadow-md shrink-0 overflow-hidden transition-all ${
-        selected ? 'border-cyan-400 ring-2 ring-cyan-400/50 -translate-y-1' : 'border-gray-300'
-      } ${dimmed ? 'opacity-40' : ''} ${onClick ? 'cursor-pointer hover:-translate-y-1' : 'cursor-default'} ${
-        isDouble ? 'rotate-90 mx-3' : ''
-      }`}
-      style={{ height: size }}
+      className={`flex items-stretch rounded-md shrink-0 overflow-hidden transition-all duration-150 ${
+        dimmed ? 'opacity-40' : ''
+      } ${onClick ? 'cursor-pointer' : 'cursor-default'} ${isDouble ? 'rotate-90 mx-3' : ''}`}
+      style={{
+        height: size,
+        background: 'linear-gradient(160deg, #ffffff 0%, #f3f1ea 55%, #e2ddcf 100%)',
+        border: selected ? '2px solid #22d3ee' : '1px solid #c9c2b3',
+        boxShadow: selected
+          ? `0 ${size * 0.18}px ${size * 0.22}px rgba(0,0,0,0.45), 0 0 0 3px rgba(34,211,238,0.35), inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -2px 2px rgba(0,0,0,0.08)`
+          : `0 ${size * 0.1}px ${size * 0.12}px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.85), inset 0 -2px 2px rgba(0,0,0,0.08)`,
+        transform: tilt,
+      }}
+      onMouseEnter={(e) => { if (onClick) e.currentTarget.style.transform = 'perspective(500px) rotateX(14deg) translateY(-6px)'; }}
+      onMouseLeave={(e) => { if (onClick) e.currentTarget.style.transform = tilt; }}
     >
       <PipFace value={left} size={size} />
-      <div className="w-[2px] bg-gray-300 shrink-0" />
+      <div
+        className="w-[3px] shrink-0"
+        style={{ background: 'linear-gradient(90deg, rgba(0,0,0,0.35), rgba(255,255,255,0.6), rgba(0,0,0,0.35))' }}
+      />
       <PipFace value={right} size={size} />
     </button>
   );
@@ -156,13 +200,35 @@ export default function DominoesGame({ gameState, players = [], currentUserId, m
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
         <div className="relative bg-gray-900 rounded-2xl shadow-2xl w-full max-w-3xl mx-4 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
-            <div>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800 gap-3">
+            <div className="min-w-0">
               <h2 className="text-white text-xl font-bold">Dominoes</h2>
-              <p className="text-gray-400 text-sm">{players.map(p => p.username).join(' vs ')}</p>
+              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                {players.map((p, i) => (
+                  <span key={p.user_id} className="flex items-center gap-1">
+                    {i > 0 && <span className="text-gray-500 text-xs">vs</span>}
+                    {p.avatar ? (
+                      <img src={p.avatar} alt={p.username} className="w-4 h-4 rounded-full object-cover" />
+                    ) : (
+                      <span className="w-4 h-4 rounded-full bg-gray-700 flex items-center justify-center text-[8px] font-bold text-gray-300">
+                        {p.username?.[0]?.toUpperCase()}
+                      </span>
+                    )}
+                    <span className="text-gray-400 text-sm truncate max-w-[120px]">{p.username}</span>
+                  </span>
+                ))}
+              </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <GameRulesButton gameType="dominoes" />
+              {!isOver && (
+                <button
+                  onClick={handleForfeit}
+                  className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-medium"
+                >
+                  Forfeit
+                </button>
+              )}
               <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'Forfeit'}>
                 <X className="w-6 h-6" />
               </button>
@@ -178,7 +244,16 @@ export default function DominoesGame({ gameState, players = [], currentUserId, m
                   currentPlayer?.user_id === p.user_id ? 'bg-purple-900/40 ring-2 ring-purple-500' : 'bg-gray-800/50'
                 }`}
               >
-                <span className="text-white text-sm font-medium">{p.username}</span>
+                <div className="flex items-center gap-1.5">
+                  {p.avatar ? (
+                    <img src={p.avatar} alt={p.username} className="w-5 h-5 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-5 h-5 rounded-full bg-gray-700 flex items-center justify-center text-[9px] font-bold text-gray-300 shrink-0">
+                      {p.username?.[0]?.toUpperCase()}
+                    </div>
+                  )}
+                  <span className="text-white text-sm font-medium">{p.username}</span>
+                </div>
                 <div className="flex -space-x-4">
                   {Array.from({ length: Math.min(handCounts[String(p.user_id)] ?? 0, 7) }).map((_, i) => (
                     <DominoTile key={i} faceDown size={28} />
@@ -268,14 +343,6 @@ export default function DominoesGame({ gameState, players = [], currentUserId, m
                   Pass
                 </button>
               )}
-            </div>
-          )}
-
-          {!isOver && (
-            <div className="flex justify-end px-5 pb-5">
-              <button onClick={handleForfeit} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
-                Forfeit
-              </button>
             </div>
           )}
 

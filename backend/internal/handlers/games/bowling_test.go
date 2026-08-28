@@ -331,3 +331,129 @@ func TestBowlingTiedTotalIsADraw(t *testing.T) {
 		t.Fatalf("expected a draw (nil winner) on a tied score, got %v", *winner)
 	}
 }
+
+// TestBowlingThrowProgressAcceptedRegardlessOfTurn mirrors pool_test.go's
+// TestPoolShotProgressAcceptedRegardlessOfTurn exactly, for bowling's own
+// live ball/pin relay — a straggling throw_progress packet can legitimately
+// arrive right as CurrentTurn advances (see game_manager.go's
+// turnGateExemptMoveTypes doc comment), and must never be rejected on turn
+// grounds since it has zero gameplay effect regardless of who sends it.
+func TestBowlingThrowProgressAcceptedRegardlessOfTurn(t *testing.T) {
+	gs := makeTestBowlingState(2)
+	gm := &GameManager{activeGames: map[uint]*GameSessionState{1: gs}}
+	move := map[string]interface{}{
+		"ball": map[string]interface{}{"x": 0.1, "y": 0.15, "z": 1.2, "qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0},
+		"pins": []interface{}{},
+	}
+	// gs.CurrentTurn is 0 (player index 0) — sending as player 2 (index 1)
+	// must NOT be rejected on turn grounds.
+	if err := gm.ProcessMove(1, gs.Players[1].UserID, "throw_progress", move); err != nil {
+		t.Fatalf("expected throw_progress from the non-current player to be accepted, got: %v", err)
+	}
+}
+
+// TestBowlingThrowRejectsOutOfTurn is the positive control for the test
+// above — confirms the turn gate is still very much alive for the one move
+// type that actually matters: a real "throw" report from the non-current
+// player must still be rejected, unaffected by exempting throw_progress.
+func TestBowlingThrowRejectsOutOfTurn(t *testing.T) {
+	gs := makeTestBowlingState(2)
+	gm := &GameManager{activeGames: map[uint]*GameSessionState{1: gs}}
+	if err := gm.ProcessMove(1, gs.Players[1].UserID, "throw", map[string]interface{}{"pins_down": 3.0}); err == nil {
+		t.Fatal("expected a real throw move from the non-current player to still be rejected")
+	}
+}
+
+// TestBowlingThrowProgressRelaysBallAndPinsOnly confirms the relay stores
+// exactly the ball/pins fields (mirroring pool's field-scoped extraction, not
+// the whole opaque moveData blob), has zero effect on scores/turn/game-over,
+// and requires no game_moves DB write (isVolatile) — go build's own
+// `gm := &GameManager{}` here (no db set) would panic on a real Create call,
+// so a clean pass through processBowlingMove directly is itself proof no
+// persistence was attempted.
+func TestBowlingThrowProgressRelaysBallAndPinsOnly(t *testing.T) {
+	gs := makeTestBowlingState(2)
+	gm := &GameManager{}
+	move := map[string]interface{}{
+		"ball":               map[string]interface{}{"x": 0.2, "y": 0.15, "z": 2.5},
+		"pins":               []interface{}{map[string]interface{}{"visible": true}},
+		"move_type":          "throw_progress", // should NOT leak into stored GameData
+		"unrelated_junk_key": "ignored",
+	}
+	gameOver, winnerID, err := gm.processBowlingMove(gs, 1, "throw_progress", move)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gameOver || winnerID != nil {
+		t.Fatal("throw_progress must never end the game or declare a winner")
+	}
+	stored, ok := gs.GameData["throw_progress"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected throw_progress to be stored in GameData")
+	}
+	if _, ok := stored["ball"]; !ok {
+		t.Error("expected the ball field to be relayed")
+	}
+	if _, ok := stored["pins"]; !ok {
+		t.Error("expected the pins field to be relayed")
+	}
+	if _, ok := stored["move_type"]; ok {
+		t.Error("expected move_type NOT to leak into the stored relay payload")
+	}
+	if _, ok := stored["unrelated_junk_key"]; ok {
+		t.Error("expected unrelated fields NOT to leak into the stored relay payload")
+	}
+}
+
+// TestBowlingPinMaskStoredAndClearedByNextThrow confirms a settled "throw"
+// move (1) records the specific standing-pin layout a spectator with no
+// local physics needs to render the correct rack between throws, and (2)
+// clears any stale in-flight throw_progress snapshot — mirroring pool.go's
+// identical delete(...,"live_ball_positions") on its own final "shot" move,
+// so a late joiner never renders a frozen mid-air ball from a throw that has
+// already fully resolved.
+func TestBowlingPinMaskStoredAndClearedByNextThrow(t *testing.T) {
+	gs := makeTestBowlingState(2)
+	gm := &GameManager{}
+
+	// Simulate a straggling in-flight snapshot from the throw that's about
+	// to settle.
+	gs.GameData["throw_progress"] = map[string]interface{}{"ball": map[string]interface{}{"x": 0.0}}
+
+	// A strike (all 10 pins down) — standing mask should be 0 (no bits set).
+	if _, _, err := gm.processBowlingMove(gs, 1, "throw", map[string]interface{}{"pins_down": 10.0, "pin_mask": 0.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mask, ok := gs.GameData["pin_mask"].(int); !ok || mask != 0 {
+		t.Fatalf("expected pin_mask=0 after a strike, got %v", gs.GameData["pin_mask"])
+	}
+	if _, ok := gs.GameData["throw_progress"]; ok {
+		t.Fatal("expected throw_progress to be cleared once the throw it described has settled")
+	}
+
+	// Turn has now passed to player 2 (a strike closes the frame). A partial
+	// leave — e.g. pins 0 and 3 still standing, mask bits 0 and 3 set = 0b1001 = 9.
+	if _, _, err := gm.processBowlingMove(gs, 2, "throw", map[string]interface{}{"pins_down": 5.0, "pin_mask": 9.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mask, ok := gs.GameData["pin_mask"].(int); !ok || mask != 9 {
+		t.Fatalf("expected pin_mask=9 after a partial leave, got %v", gs.GameData["pin_mask"])
+	}
+}
+
+// TestBowlingThrowWithoutPinMaskLeavesExistingMaskUntouched confirms
+// pin_mask is genuinely optional — an older/differently-shaped client
+// omitting it must not corrupt or clear whatever mask was already broadcast
+// (the very next throw, from any thrower, will supply a fresh one anyway).
+func TestBowlingThrowWithoutPinMaskLeavesExistingMaskUntouched(t *testing.T) {
+	gs := makeTestBowlingState(2)
+	gm := &GameManager{}
+	gs.GameData["pin_mask"] = 42
+
+	if _, _, err := gm.processBowlingMove(gs, 1, "throw", map[string]interface{}{"pins_down": 3.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gs.GameData["pin_mask"] != 42 {
+		t.Fatalf("expected pin_mask to be left untouched when omitted, got %v", gs.GameData["pin_mask"])
+	}
+}

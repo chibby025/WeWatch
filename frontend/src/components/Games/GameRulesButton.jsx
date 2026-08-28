@@ -2,7 +2,11 @@
 import { useState } from 'react';
 import { Info, X } from 'lucide-react';
 
-const RULES = {
+// Exported so GameStartInfoModal.jsx can reuse the exact same rules text for
+// the brief poster+instructions intro shown when a game starts, rather than
+// maintaining a second copy that could drift out of sync with this one.
+// eslint-disable-next-line react-refresh/only-export-components -- same accepted cross-file data-export pattern already used by WatchTypePicker.jsx's WATCH_TYPES
+export const RULES = {
   tic_tac_toe: {
     title: 'Tic-Tac-Toe',
     rules: [
@@ -114,7 +118,8 @@ const RULES = {
   curling: {
     title: 'Curling',
     rules: [
-      'Drag anywhere on the house to aim, then hold the throw button to charge weight and release — good timing lands your stone close to your aim.',
+      'Press and pull back anywhere on the ice — like a slingshot — to flick your stone. Pull further back for more power, drag left/right to steer.',
+      'It\'s a real lane: too weak a flick and your stone stops short of the house — it won\'t reach the rings at all. Too hard and it slides right through and past the button.',
       'Each end, both players alternate throwing 4 stones each at the same house.',
       'Once all 8 stones are down, whoever\'s single closest stone to the button beats the opponent\'s best stone wins the end — scoring 1 point for EVERY one of their own stones that also beats the opponent\'s best.',
       'After 4 ends, highest total score wins.',
@@ -123,7 +128,7 @@ const RULES = {
   slice_frenzy: {
     title: 'Slice Frenzy',
     rules: [
-      'Fruit is launched into the air one after another — swipe across it with your mouse or finger to slice it before it falls.',
+      'Apples, watermelon wedges, bananas, pineapples, strawberries, coconuts, grapes, doughnuts and more are launched into the air one after another — swipe across them with your mouse or finger to slice before they fall.',
       'Slicing multiple pieces in one swipe, or in quick succession, builds a combo for bonus points.',
       'Watch out for bombs — slicing one costs you a life instead of points!',
       'Missing a fruit (letting it fall unsliced) also costs a life.',
@@ -303,6 +308,57 @@ const RULES = {
       'Type /cp in chat to save your current position as a checkpoint — handy before a tricky jump.',
       'Race everyone else to the top — there\'s a real chat if you want to cheer each other on (or trash talk).',
       'First load can take a moment — the course assets download once and are cached after that.',
+    ],
+  },
+  tank_battle: {
+    title: 'Tank Battle',
+    rules: [
+      'Real-time, no turns — both players move and fire simultaneously the whole match.',
+      'WASD or arrow keys to drive; your turret always aims toward your mouse cursor (drag a virtual joystick + tap FIRE on mobile).',
+      'Click, or press Space, to fire — each hit deals 20 damage, starting from 100 HP.',
+      'The first tank reduced to 0 HP loses the battle!',
+      'A 3-2-1 countdown starts every match so neither player gets a head start.',
+    ],
+  },
+  bomberman: {
+    title: 'Bomberman',
+    rules: [
+      'Real-time, no turns — 2-4 players move and place bombs simultaneously the whole match.',
+      'WASD or arrow keys to move (a virtual joystick + 💣 button on mobile); Space (or the 💣 button) places a bomb at your current tile.',
+      'A placed bomb explodes a couple of seconds later on its own — or press E (or the DETONATE button on mobile) to blow up all of your armed bombs at once, on your own terms.',
+      'It blasts outward in a cross shape, eliminating any player caught in it, including yourself!',
+      'Walls come in 3 tiers — wooden (1 hit), concrete (2 hits), iron (3 hits) — each one blocks the blast and needs that many separate hits before it\'s actually destroyed.',
+      'Blasts chain: if your explosion reaches another live bomb (yours or an opponent\'s), it forces that bomb to go off too — a bomb never blocks a blast, so a cascade can ripple through several at once.',
+      'You can have up to 3 bombs out at a time — cluster them for a bigger combined chain reaction.',
+      'The last player standing wins — if a blast eliminates everyone remaining at once, it\'s a draw.',
+    ],
+  },
+  football: {
+    title: 'Football',
+    rules: [
+      'Real-time, no turns — 2-6 players move simultaneously the whole match, split evenly into Team A and Team B by join order.',
+      'WASD or arrow keys to move (a virtual joystick on mobile) — get close to the ball to automatically kick it.',
+      'Team A defends the left goal (scores on the right); Team B defends the right goal (scores on the left).',
+      'First team to 3 goals wins!',
+    ],
+  },
+  blob_battle: {
+    title: 'Blob Battle',
+    rules: [
+      'Real-time free-for-all, 2-8 players — everyone moves simultaneously, no turns.',
+      'Move your mouse to steer your blob toward it (a virtual joystick on mobile). Bigger blobs move slower!',
+      'Touch a green pellet to eat it and grow a little.',
+      'Touch another player\'s blob that\'s notably smaller than yours to eat them and grow a lot — but stay away from anyone bigger than you!',
+      'Last blob standing wins.',
+    ],
+  },
+  hide_seek: {
+    title: 'Hide & Seek',
+    rules: [
+      'Real-time, no turns — 2-8 players, split automatically into Hunters and Props (about 1 Hunter per 4 players).',
+      'Props: tap one of the 10 spots to hide there during the hiding phase. You can change your mind until every Prop has chosen — then the hunt begins!',
+      'Hunters: once the hunt begins, tap any spot to search it. A hit reveals which Prop was hiding there; a miss reveals nothing.',
+      'Hunters win once every Prop has been found. Props win if any of them are still hidden when the round ends.',
     ],
   },
   ping_pong: {

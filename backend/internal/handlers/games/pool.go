@@ -71,6 +71,16 @@ func poolInitialGameData() map[string]interface{} {
 		"last_pocketed": []interface{}{},
 		"cue_pos_x":     0.25,
 		"cue_pos_y":     0.5,
+		// state_version bumps on every real "shot" (never on the volatile
+		// shot_progress/game_event relays) — the single number every client
+		// compares its own last-applied value against to know whether it's
+		// caught up. view_acks records each player's own most recently
+		// APPLIED version (see processPoolViewAck), so either player — or a
+		// spectator — can tell at a glance whether the other side's board is
+		// still lagging behind the authoritative one, not just assume the
+		// broadcast silently landed and rendered correctly.
+		"state_version": float64(0),
+		"view_acks":     map[string]interface{}{},
 		// Real bug, confirmed by reading the embedded engine's own bridge
 		// script (wewatch-bridge.js): on sync_state, any ball whose ID is
 		// absent from ball_positions is treated as "already pocketed" and
@@ -104,18 +114,38 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 		return processPoolShotProgress(gameState, moveData)
 	}
 
-	// Live aim/cue-stick relay — a 100% opaque passthrough of the embedded
-	// engine's own serialised AimEvent (see wewatch-bridge.js's
-	// installBroadcastRelay/handleGameEvent and container.ts's
-	// ensureWatchAimController/pushIncomingGameEvent). WeWatch's backend
-	// never parses this payload — it has no reason to, since foul/turn/win
-	// is decided exclusively by the "shot" case below regardless of what a
-	// player was aiming at along the way. Registered alongside shot_progress
-	// in game_manager.go's volatileRT/isVolatile gate, so this never touches
-	// the DB either.
+	// Live aim/cue-stick relay — wraps the embedded engine's own serialised
+	// AimEvent (see wewatch-bridge.js's installBroadcastRelay/handleGameEvent
+	// and container.ts's ensureWatchAimController/pushIncomingGameEvent) with
+	// the sender's own player ID. Added because a member reported never
+	// seeing the shooter's cue-stick at all: whether the embedded (external,
+	// third-party) engine's own WatchAim rendering succeeds for a spectating
+	// client isn't something this backend or PoolGame.jsx can verify or
+	// control directly, so tagging the sender here also lets the frontend
+	// show its own, WeWatch-owned "X is aiming" indicator that works
+	// regardless of whether the engine's own stick-rendering does. The inner
+	// "payload" field stays a 100% opaque passthrough exactly as before —
+	// WeWatch's backend never parses it, since foul/turn/win is decided
+	// exclusively by the "shot" case below regardless of what a player was
+	// aiming at along the way. Registered alongside shot_progress in
+	// game_manager.go's volatileRT/isVolatile gate, so this never touches the
+	// DB either.
 	if moveType == "game_event" {
-		gameState.GameData["aim_event"] = moveData["payload"]
+		gameState.GameData["aim_event"] = map[string]interface{}{
+			"shooter_id": float64(playerID),
+			"payload":    moveData["payload"],
+		}
 		return false, nil, nil
+	}
+
+	// View-confirmation ack — a client sends this once it has actually
+	// applied a given state_version to its own embedded iframe (not merely
+	// received the WS broadcast). Purely informational/diagnostic: never
+	// touches foul/turn/win logic, never gates a shot. See PoolGame.jsx's
+	// merged sync effect for the sender side and the periodic heartbeat that
+	// re-sends it defensively even when nothing changed.
+	if moveType == "view_ack" {
+		return processPoolViewAck(gameState, playerID, moveData)
 	}
 
 	if moveType != "shot" {
@@ -183,7 +213,29 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 			foul = "no_first_contact"
 		} else if !openTable && myType != "" {
 			ballType := poolBallType(firstContact)
-			if ballType != myType && ballType != "eight" {
+			if ballType == "eight" {
+				// Hitting the 8-ball first is only legal once your own group
+				// is already fully cleared — real 8-ball rules. This used to
+				// blanket-exempt the 8-ball from "wrong first contact"
+				// unconditionally, a real bug letting a player hit the money
+				// ball first (before clearing their own group) with no foul
+				// at all. alreadyPocketed here still reflects the board
+				// BEFORE this shot's own newlyPocketed merge (that happens
+				// later, below) — correct, since "first contact" fouls are
+				// judged against what was already cleared going INTO this
+				// shot, not balls this same shot goes on to pocket after.
+				myBalls := poolPlayerBalls(myType)
+				cleared := true
+				for _, b := range myBalls {
+					if !alreadyPocketed[b] {
+						cleared = false
+						break
+					}
+				}
+				if !cleared {
+					foul = "wrong_first_contact"
+				}
+			} else if ballType != myType {
 				foul = "wrong_first_contact"
 			}
 		}
@@ -275,6 +327,14 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 	gameState.GameData["cue_pos_x"] = math.Max(0, math.Min(1, cueX))
 	gameState.GameData["cue_pos_y"] = math.Max(0, math.Min(1, cueY))
 	gameState.GameData["ball_positions"] = ballPositions
+	// Bump the view-confirmation counter — every connected client's own
+	// last-acked version (view_acks, updated only by processPoolViewAck) is
+	// now stale by definition until each of them applies this new state and
+	// acks it back. Deliberately never clears view_acks itself: an entry
+	// pointing at the old version already correctly reads as "behind" once
+	// compared against the bumped state_version below, with no extra
+	// bookkeeping needed.
+	gameState.GameData["state_version"] = float64(ppIntFrom(gameState.GameData["state_version"]) + 1)
 	// A late joiner's rehydration reads GameData wholesale — never leave a
 	// stale mid-shot snapshot sitting next to the now-fresh authoritative
 	// positions once the real, final report has landed. aim_event is cleared
@@ -474,5 +534,32 @@ func parsePoolBallPositions(raw map[string]interface{}, withVelocity bool) map[s
 func processPoolShotProgress(gameState *GameSessionState, moveData map[string]interface{}) (bool, *uint, error) {
 	liveRaw, _ := moveData["live_ball_positions"].(map[string]interface{})
 	gameState.GameData["live_ball_positions"] = parsePoolBallPositions(liveRaw, true)
+	return false, nil, nil
+}
+
+// processPoolViewAck records that the sending player has actually applied
+// state_version to their own embedded iframe — never mere receipt of the WS
+// broadcast, that's implicit already; this is the client's own confirmation
+// it finished posting sync_state (and re-asserting set_interactive) to the
+// engine. A client that only ever ROLLED BACK to an older version (a
+// malformed/stale ack) is ignored rather than allowed to regress
+// view_acks[player] backwards, since a stale ack arriving late (out of
+// order, e.g. after a genuinely newer one already landed) would otherwise
+// make that player look artificially "behind" again.
+func processPoolViewAck(gameState *GameSessionState, playerID uint, moveData map[string]interface{}) (bool, *uint, error) {
+	versionF, ok := ppFloat(moveData["state_version"])
+	if !ok {
+		return false, nil, fmt.Errorf("view_ack missing state_version")
+	}
+	acks, _ := gameState.GameData["view_acks"].(map[string]interface{})
+	if acks == nil {
+		acks = map[string]interface{}{}
+	}
+	key := fmt.Sprintf("%d", playerID)
+	if existing, ok := ppFloat(acks[key]); ok && existing >= versionF {
+		return false, nil, nil
+	}
+	acks[key] = versionF
+	gameState.GameData["view_acks"] = acks
 	return false, nil, nil
 }

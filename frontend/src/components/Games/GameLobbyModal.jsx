@@ -7,6 +7,16 @@ import { X, Gamepad2, Users, ChevronLeft, ChevronRight, Search, Trophy, AlertTri
 // (growing) game-poster collection out of the deployed frontend bundle entirely.
 const GAME_POSTERS_BASE_URL = 'https://letswatchout.b-cdn.net/games/posters';
 
+// Exported once, right below the games array it's derived from, so
+// GameStartInfoModal.jsx (the brief poster+instructions intro shown when a
+// game starts) can look up a game's poster/display name without importing
+// this whole modal's internal state/logic — only the plain data it needs.
+// eslint-disable-next-line react-refresh/only-export-components -- same accepted cross-file data-export pattern already used by WatchTypePicker.jsx's WATCH_TYPES
+export function getGameMeta(gameType) {
+  const g = games.find((game) => game.id === gameType);
+  return g ? { name: g.name, image: g.image } : null;
+}
+
 const games = [
   {
     id: 'tic_tac_toe',
@@ -345,6 +355,57 @@ const games = [
     disabled: false,
     type: 'arcade',
     heavy: false
+  },
+  {
+    id: 'tank_battle',
+    name: 'Tank Battle',
+    description: 'Drive, aim, and fire in real time — first tank to fall loses. Both players act simultaneously, no turns!',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/tank_battle.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'bomberman',
+    name: 'Bomberman',
+    description: 'Place bombs, blast through walls, and be the last one standing — everyone moves and plants bombs in real time, no turns!',
+    minPlayers: 2,
+    maxPlayers: 4,
+    image: `${GAME_POSTERS_BASE_URL}/bomberman.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'football',
+    name: 'Football',
+    description: 'A real 3D arcade football match — host plays, everyone else watches courtside.',
+    minPlayers: 1,
+    maxPlayers: 1,
+    image: `${GAME_POSTERS_BASE_URL}/football.webp`,
+    disabled: false,
+    type: 'arcade',
+    heavy: true
+  },
+  {
+    id: 'blob_battle',
+    name: 'Blob Battle',
+    description: 'Grow by eating pellets and smaller blobs — avoid anything bigger than you! Last blob standing wins.',
+    minPlayers: 2,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/blob_battle.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'hide_seek',
+    name: 'Hide & Seek',
+    description: 'Props hide, Hunters search — first team to win their side wins the round! Roles are split automatically.',
+    minPlayers: 2,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/hide_seek.webp`,
+    disabled: false,
+    type: 'multiplayer'
   },
   // ramp_rush temporarily removed — not enough time to finish/fix it
   // {

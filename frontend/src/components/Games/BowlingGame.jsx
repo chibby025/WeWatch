@@ -2,10 +2,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { X } from 'lucide-react';
+import { X, Volume2, VolumeX } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
-import { BowlPhysics, FRAME_ROLL_TIME, BALL_RADIUS, BALL_LINE, BASE_HEIGHT } from './bowlingPhysics';
+import { BowlPhysics, FRAME_ROLL_TIME, BALL_RADIUS, BALL_LINE, BALL_HEIGHT, TRACK_WIDTH, PIN_POSITIONS } from './bowlingPhysics';
 
 // Real, GPL-3.0 bowling-alley/ball/pin assets from github.com/iliagrigorevdev/
 // bowling, hosted on our own BunnyCDN — see CLAUDE.md's Bowling section for
@@ -13,9 +13,32 @@ import { BowlPhysics, FRAME_ROLL_TIME, BALL_RADIUS, BALL_LINE, BASE_HEIGHT } fro
 const AMMO_URL = 'https://LetsWatchOut.b-cdn.net/games/bowling/ammo.js';
 const SCENE_URL = 'https://LetsWatchOut.b-cdn.net/games/bowling/scene.gltf';
 
-const CAMERA_FOV_DEG = 50;
+// Camera — a single source of truth used by BOTH the thrower's physics
+// scene and the passive broadcast scene (previously each hardcoded its own
+// copy of these three values, which had already drifted into a genuine
+// divergence risk once — see buildEnvironment's own history above). A
+// narrower FOV pulled further back reads as more "long lane, seen down its
+// length" (a telephoto-style compression, closer to real broadcast bowling
+// coverage) than the original wide/close framing, which made the lane read
+// as short since a wide FOV up close visually compresses depth rather than
+// exaggerating it.
+const CAMERA_FOV_DEG = 48;
+const CAMERA_POSITION_Y = 0.45;
+const CAMERA_POSITION_Z = 4.3;
+const CAMERA_PITCH_DEG = -4;
 const GRAB_THRESHOLD_PX = 5; // pointer must move at least this far before a "pick" becomes a drag
 const BALL_ANGLE_MAX = Math.PI / 12;
+// ~10Hz @ 60fps — matches pool's own shot_progress relay cadence
+// (PoolGame.jsx/wewatch-bridge.js). Frequent enough to look smooth, far
+// below what would meaningfully burden the WS/DB write path (throw_progress
+// is registered as a volatile move in game_manager.go — no DB persistence
+// per packet).
+const PROGRESS_SEND_EVERY_FRAMES = 6;
+// If no throw_progress packet has arrived in this long, the passive
+// broadcast scene (below) treats the throw as over and falls back to the
+// idle rack/parked-ball view — covers both "the throw genuinely settled and
+// the server cleared throw_progress" and "a packet or two got dropped."
+const RELAY_STALE_MS = 600;
 
 // Module-level singleton promises — ammo.js and the glTF model are each
 // fetched/parsed exactly once for the whole page's lifetime, not once per
@@ -68,6 +91,166 @@ function loadBowlingScene() {
     });
   }
   return gltfLoadPromise;
+}
+
+// ── Shared environment builder — lights + procedural walls/ceiling/floor.
+// Used by BOTH the active thrower's own physics scene and the passive
+// broadcast scene everyone else in the room sees, so the two always look
+// identical and a future visual tweak only needs to happen in one place.
+function buildEnvironment(scene) {
+  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  const dLight = new THREE.DirectionalLight(0xffffff, 0.7);
+  dLight.position.set(-0.4, 0.6, 1.0);
+  scene.add(dLight);
+  // Two extra warm lights over the pin deck — the original scene was lit
+  // for just the lane/pins in isolation; the added walls need something to
+  // actually catch the light or they'd read as flat black silhouettes
+  // against the sky-colored background.
+  const overheadLight = new THREE.PointLight(0xfff2d9, 0.9, 12);
+  overheadLight.position.set(0, 2.6, 0.5);
+  scene.add(overheadLight);
+  const fillLight = new THREE.HemisphereLight(0xdbe9ff, 0x2a2a30, 0.45);
+  scene.add(fillLight);
+
+  // ── Procedural enclosure — no real "bowling alley wall" asset was found
+  // that would sit cleanly around this exact lane's dimensions, so this part
+  // stays hand-built (cheap, zero licensing risk, matches the same technique
+  // BasketballGame.jsx/environment.js already uses for its own court
+  // surroundings). ───────────────────────────────────────────────────────
+  const wallDisposables = [];
+  const addWall = (w, h, mat, x, y, z, ry = 0) => {
+    const geo = new THREE.PlaneGeometry(w, h);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    mesh.rotation.y = ry;
+    scene.add(mesh);
+    wallDisposables.push(geo);
+  };
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x9aa7b8, roughness: 0.9 });
+  const ceilMat = new THREE.MeshStandardMaterial({ color: 0x6d7686, roughness: 1 });
+  wallDisposables.push(wallMat, ceilMat);
+  const enclosureWidth = TRACK_WIDTH + 5.0;
+  const enclosureHeight = 3.0;
+  const enclosureBackZ = -3.4; // behind the pin deck
+  const enclosureFrontZ = 7.0; // behind the camera/player — comfortably past CAMERA_POSITION_Z so the floor/walls don't visibly end mid-frame
+  addWall(enclosureWidth, enclosureHeight, wallMat, 0, enclosureHeight / 2, enclosureBackZ); // back wall
+  addWall(enclosureWidth, enclosureHeight, wallMat, -enclosureWidth / 2, enclosureHeight / 2, (enclosureBackZ + enclosureFrontZ) / 2, Math.PI / 2); // left wall
+  addWall(enclosureWidth, enclosureHeight, wallMat, enclosureWidth / 2, enclosureHeight / 2, (enclosureBackZ + enclosureFrontZ) / 2, -Math.PI / 2); // right wall
+  const ceilGeo = new THREE.PlaneGeometry(enclosureWidth, enclosureFrontZ - enclosureBackZ);
+  const ceiling = new THREE.Mesh(ceilGeo, ceilMat);
+  ceiling.position.set(0, enclosureHeight, (enclosureBackZ + enclosureFrontZ) / 2);
+  ceiling.rotation.x = Math.PI / 2;
+  scene.add(ceiling);
+  wallDisposables.push(ceilGeo);
+  // Floor — the original scene had none at all, so the walls appeared to
+  // float in the plain sky-colored background below y=0 with nothing
+  // grounding them. Sits a hair below y=0 to avoid z-fighting with the lane
+  // mesh's own approach-area geometry.
+  const floorGeo = new THREE.PlaneGeometry(enclosureWidth, enclosureFrontZ - enclosureBackZ);
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x3a2a30, roughness: 0.95 });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.position.set(0, -0.02, (enclosureBackZ + enclosureFrontZ) / 2);
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+  wallDisposables.push(floorGeo, floorMat);
+
+  return { wallDisposables };
+}
+
+// navigator.vibrate feature-detected — Safari/iOS has no Vibration API at
+// all. Deliberately independent of the sound-mute toggle, same convention
+// already established in PingPongGame.jsx/ArcheryGame.jsx.
+function hapticImpact(pattern) {
+  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+    navigator.vibrate(pattern);
+  }
+}
+
+// Synthesized ball-release "whoosh" — a short filtered-noise-ish sweep via a
+// fast-descending sawtooth, pitch/volume scaled by real release velocity. No
+// external audio asset, same convention as every other game in this app's
+// arcade/party roster (Darts/Archery/Ping Pong/Air Hockey).
+function playReleaseSound(velocity, enabled) {
+  if (!enabled || typeof window === 'undefined') return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sawtooth';
+    const startFreq = 220 + Math.min(velocity, 12) * 18;
+    oscillator.frequency.setValueAtTime(startFreq, context.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(startFreq * 0.4, context.currentTime + 0.22);
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.1, context.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.24);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.26);
+    setTimeout(() => context.close(), 340);
+  } catch {
+    /* ignore — sound is a pure nicety */
+  }
+}
+
+// Synthesized pin-crash/thud, fired at the exact moment the local physics
+// simulation's own pin count settles (the same instant the "throw" move is
+// sent) — intensity/timbre scaled by how many pins actually fell. A bigger
+// crash for a strike than a single clipped pin.
+function playCrashSound(beatenCount, enabled) {
+  if (!enabled || typeof window === 'undefined') return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    const context = new AudioContextClass();
+    const noiseTaps = Math.max(1, Math.min(beatenCount, 10));
+    for (let i = 0; i < noiseTaps; i++) {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'triangle';
+      const t0 = context.currentTime + i * 0.014;
+      oscillator.frequency.setValueAtTime(70 + Math.random() * 90, t0);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.11, t0 + 0.006);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.15);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(t0);
+      oscillator.stop(t0 + 0.16);
+    }
+    setTimeout(() => context.close(), 400 + noiseTaps * 14);
+  } catch {
+    /* ignore — sound is a pure nicety */
+  }
+}
+
+// A short triumphant 3-note ascending chime for a strike or spare — the one
+// "real bowling alley" celebratory beat this game didn't have any audio
+// payoff for at all before.
+function playStrikeFanfare(enabled) {
+  if (!enabled || typeof window === 'undefined') return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    const context = new AudioContextClass();
+    const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
+    notes.forEach((freq, i) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      const t0 = context.currentTime + i * 0.09;
+      oscillator.type = 'triangle';
+      oscillator.frequency.setValueAtTime(freq, t0);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.12, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.3);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(t0);
+      oscillator.stop(t0 + 0.32);
+    });
+    setTimeout(() => context.close(), 700);
+  } catch {
+    /* ignore — sound is a pure nicety */
+  }
 }
 
 function fmtDigit(n) {
@@ -125,7 +308,20 @@ function Scoreboard({ players, scoresMap, currentPlayerId }) {
             const s = scoresMap[String(p.user_id)] || {};
             return (
               <tr key={p.user_id} className={p.user_id === currentPlayerId ? 'bg-purple-900/30' : ''}>
-                <td className="pr-2 py-1 font-medium whitespace-nowrap max-w-[90px] truncate">{p.username}</td>
+                <td className="pr-2 py-1">
+                  <div className="flex items-center gap-1.5 max-w-[110px]">
+                    <div className="w-5 h-5 rounded-full overflow-hidden shrink-0 bg-gray-700">
+                      {p.avatar ? (
+                        <img src={p.avatar} alt={p.username} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-[9px] font-bold text-gray-300">
+                          {p.username?.[0]?.toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                    <span className="font-medium whitespace-nowrap truncate">{p.username}</span>
+                  </div>
+                </td>
                 {Array.from({ length: 10 }).map((_, fi) => {
                   const chars = frameDisplayChars(fi, s);
                   return (
@@ -161,6 +357,22 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
   const pinMeshesRef = useRef(null);
   const reportedThrowRef = useRef(false);
   const lastPinsStandingRef = useRef(null);
+  // ── Broadcast-relay state, read by the passive spectator scene's own
+  // animate() loop (never by the thrower's — see the effect below). Kept in
+  // sync via lightweight ref-writing effects rather than being read directly
+  // off the `gs` closure, since the animate loop runs every frame and can't
+  // depend on a fresh closure the way a React effect can.
+  const relayRef = useRef({ ball: null, pins: null, receivedAt: 0 });
+  const pinMaskRef = useRef(-1); // -1 = unknown/full rack (matches BowlPhysics.resetPhysics's own convention)
+  // A knocked-over pin lies flat and mostly disappears from view at this
+  // camera angle — with nothing else marking the moment, a genuine strike
+  // can look exactly like "nothing happened." This transient label is the
+  // one unmistakable on-screen confirmation that a throw actually landed,
+  // for every throw (not just strikes/spares, which already get the
+  // separate playStrikeFanfare sound below).
+  const [throwLabel, setThrowLabel] = useState(null);
+  const throwLabelTimerRef = useRef(null);
+  useEffect(() => () => { if (throwLabelTimerRef.current) clearTimeout(throwLabelTimerRef.current); }, []);
   const touchPointRef = useRef(new THREE.Vector2());
   const inputRef = useRef({
     pickingBall: false,
@@ -177,6 +389,30 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
   const [engineReady, setEngineReady] = useState(false);
   const [loadError, setLoadError] = useState(null);
 
+  // Sound only ever plays on the active thrower's own device — spectators
+  // have no local physics simulation and no per-throw broadcast to sync
+  // audio/haptics against (see the "Waiting for your turn" placeholder
+  // branch below), matching this game's existing client-authoritative-
+  // physics trust model. soundEnabledRef mirrors the state into the
+  // animate() loop's closure, which is created once per scene-build effect
+  // run and doesn't have soundEnabled in its own dependency array (adding
+  // it would tear down and rebuild the whole Three.js/Ammo scene on every
+  // mute toggle).
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    try { return localStorage.getItem('bowling_sound_enabled') !== 'false'; } catch { return true; }
+  });
+  const soundEnabledRef = useRef(soundEnabled);
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+    try { localStorage.setItem('bowling_sound_enabled', String(soundEnabled)); } catch { /* ignore */ }
+  }, [soundEnabled]);
+
+  // Detects a NEW strike/spare on the current viewer's own scoresheet (index
+  // transitioning from "not yet resolved" to strike(1)/spare(2)) to fire a
+  // celebratory fanfare — this game had zero audio payoff for its single
+  // most exciting moment before this.
+  const prevFrameStatesRef = useRef(null);
+
   const gs = gameState?.game_state || {};
   const scoresMap = gs.scores || {};
   const currentTurn = gameState?.current_turn ?? 0;
@@ -184,8 +420,25 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
   const isMyTurn = currentPlayer?.user_id === currentUserId;
   const isPlayer = players.some((p) => p.user_id === currentUserId);
   const myScores = scoresMap[String(currentUserId)];
+  // Whichever player is CURRENTLY at bat — this is `myScores` itself during
+  // your own turn (same object, so nothing changes for the thrower), but
+  // also gives spectators a live view into the action's scoresheet without
+  // needing their own turn. Used to drive spectator sound/label reactions
+  // below.
+  const activeThrowerScores = scoresMap[String(currentPlayer?.user_id)];
   const winner = gameState?.winner_id ? players.find((p) => p.user_id === gameState.winner_id) : null;
   const isOver = ['finished', 'forfeited', 'completed'].includes(gameState?.status);
+
+  // Keep the two broadcast-relay refs current on every gameState update —
+  // the passive spectator scene's animate() loop reads them every frame and
+  // can't itself depend on a fresh `gs` closure.
+  useEffect(() => {
+    pinMaskRef.current = typeof gs.pin_mask === 'number' ? gs.pin_mask : -1;
+  }, [gs.pin_mask]);
+  useEffect(() => {
+    if (!gs.throw_progress) return; // cleared server-side once a throw settles — let it go stale naturally (RELAY_STALE_MS)
+    relayRef.current = { ball: gs.throw_progress.ball || null, pins: gs.throw_progress.pins || null, receivedAt: Date.now() };
+  }, [gs.throw_progress]);
 
   const updateTouchRay = useCallback((clientX, clientY) => {
     const s = sceneRef.current;
@@ -197,9 +450,23 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
     return s.raycaster.ray;
   }, []);
 
+  // Intersects at the BALL's own height (its center, not the lane surface
+  // it rolls on) so a click that visually lands on the ball always resolves
+  // to a world point very close to the ball's real position, regardless of
+  // camera angle. This used to intersect at BASE_HEIGHT (the lane surface,
+  // BALL_RADIUS below the ball's center) — with the original steep, distant
+  // camera the couple-centimeter gap between the two heights was invisible
+  // in practice, but the new low, near-horizontal camera (CAMERA_PITCH_DEG)
+  // makes rays nearly parallel to any horizontal plane — extending a ray
+  // that extra BALL_RADIUS in Y sends its X/Z intersection wildly off,
+  // silently missing the ball's actual grab radius entirely. Nothing else
+  // in the pick/drag/release math cares which height this plane sits at —
+  // pick point and drag point are always compared to each other or to
+  // BALL_LINE/releasePosition on the same plane, never to BASE_HEIGHT
+  // itself — so this is a pure precision fix, not a behavior change.
   const intersectTouchPlane = useCallback((ray, out) => {
     if (Math.abs(ray.direction.y) > 1e-5) {
-      const t = (BASE_HEIGHT - ray.origin.y) / ray.direction.y;
+      const t = (BALL_HEIGHT - ray.origin.y) / ray.direction.y;
       if (t >= 0) {
         out.copy(ray.direction).multiplyScalar(t).add(ray.origin);
         return true;
@@ -235,18 +502,15 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
         const width = activeMount.clientWidth || 1;
         const height = activeMount.clientHeight || 1;
         const camera = new THREE.PerspectiveCamera(CAMERA_FOV_DEG, width / height, 0.1, 20);
-        camera.position.set(0, 1.7, 5.0);
-        camera.rotation.x = (-25 / 180) * Math.PI;
+        camera.position.set(0, CAMERA_POSITION_Y, CAMERA_POSITION_Z);
+        camera.rotation.x = (CAMERA_PITCH_DEG / 180) * Math.PI;
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(width, height);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
         activeMount.appendChild(renderer.domElement);
 
-        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-        const dLight = new THREE.DirectionalLight(0xffffff, 0.7);
-        dLight.position.set(-0.4, 0.6, 1.0);
-        scene.add(dLight);
+        const { wallDisposables } = buildEnvironment(scene);
 
         scene.add(assets.trackMesh.clone());
         const ballMesh = assets.ballMesh.clone();
@@ -272,6 +536,7 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
         sceneRef.current = { camera, renderer, raycaster };
 
         let raf;
+        let progressFrameCount = 0;
         const clock = new THREE.Clock();
         const animate = () => {
           raf = requestAnimationFrame(animate);
@@ -298,12 +563,47 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
             }
           }
 
+          // Live broadcast — while this throw is actively rolling (from
+          // release until it settles/gets reported below), relay the ball
+          // and every pin's already-just-computed transform to the room at a
+          // throttled ~10Hz (matching pool's own shot_progress cadence), so
+          // everyone else sees the throw happen instead of a static
+          // "X is bowling…" placeholder. Deliberately gated on
+          // `!reportedThrowRef.current`, NOT `physics.simulationActive` alone
+          // — the latter stays true for the rest of the turn (only cleared
+          // by the next resetPhysics call), long after the ball/pins have
+          // visually stopped moving.
+          if (physics.simulationActive && !reportedThrowRef.current) {
+            progressFrameCount++;
+            if (progressFrameCount % PROGRESS_SEND_EVERY_FRAMES === 0) {
+              onMove({
+                move_type: 'throw_progress',
+                ball: { x: bp.x(), y: bp.y(), z: bp.z(), qx: bq.x(), qy: bq.y(), qz: bq.z(), qw: bq.w() },
+                pins: pinMeshes.map((pm) => ({
+                  visible: pm.visible,
+                  x: pm.position.x,
+                  y: pm.position.y,
+                  z: pm.position.z,
+                  qx: pm.quaternion.x,
+                  qy: pm.quaternion.y,
+                  qz: pm.quaternion.z,
+                  qw: pm.quaternion.w,
+                })),
+              });
+            }
+          }
+
           if (physics.simulationActive && physics.simulationTime > FRAME_ROLL_TIME && !reportedThrowRef.current) {
             reportedThrowRef.current = true;
             const standingMask = physics.detectStandingPins();
             const beatenMask = physics.currentPinsMask & ~standingMask;
             const beatenCount = physics.countPins(beatenMask);
-            onMove({ move_type: 'throw', pins_down: beatenCount });
+            onMove({ move_type: 'throw', pins_down: beatenCount, pin_mask: standingMask });
+            playCrashSound(beatenCount, soundEnabledRef.current);
+            hapticImpact(beatenCount >= 8 ? [20, 40, 20] : beatenCount > 0 ? [12] : [6]);
+            setThrowLabel(beatenCount === 10 ? 'STRIKE!' : beatenCount === 0 ? 'GUTTER' : `${beatenCount} PIN${beatenCount === 1 ? '' : 'S'}!`);
+            if (throwLabelTimerRef.current) clearTimeout(throwLabelTimerRef.current);
+            throwLabelTimerRef.current = setTimeout(() => setThrowLabel(null), 2200);
           }
 
           renderer.render(scene, camera);
@@ -324,6 +624,11 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
           cancelAnimationFrame(raf);
           window.removeEventListener('resize', handleResize);
           renderer.dispose();
+          // Walls/ceiling are freshly created per scene-build (not clones of
+          // a shared cache like the track/ball/pin assets are), so they're
+          // the one thing here that actually needs explicit disposal to
+          // avoid leaking a geometry+material set every turn.
+          for (const d of wallDisposables) d.dispose();
           if (activeMount.contains(renderer.domElement)) activeMount.removeChild(renderer.domElement);
           sceneRef.current = null;
           physicsRef.current = null;
@@ -363,6 +668,217 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
     reportedThrowRef.current = false;
     physics.resetPhysics(false, standing >= 10 ? -1 : physics.detectStandingPins());
   }, [isMyTurn, isOver, myScores?.pins_standing]);
+
+  // ── Passive "broadcast" scene for anyone who is NOT the active thrower —
+  // renders the exact same lane/walls (via the shared buildEnvironment
+  // helper), but has no Ammo.js/physics of its own at all: it's driven
+  // entirely by the active thrower's relayed throw_progress transforms while
+  // fresh (relayRef), falling back to the last-known standing-pin layout
+  // (pinMaskRef, from the "throw" move's own pin_mask) plus a ball parked at
+  // the foul line once a throw has settled or nothing is happening yet.
+  // Deliberately a fully separate effect/scene from the thrower's own,
+  // rather than a shared one branching internally — the thrower's path is
+  // load-bearing, already-verified gameplay logic, and duplicating this
+  // strictly-cosmetic renderer keeps zero risk of the two interfering.
+  useEffect(() => {
+    if (isMyTurn || isOver) return undefined;
+    const mount = mountRef.current;
+    if (!mount) return undefined;
+
+    let cancelled = false;
+    let disposeFn = null;
+
+    loadBowlingScene().then((assets) => {
+      if (cancelled || !mountRef.current) return;
+      const activeMount = mountRef.current;
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0.75, 0.8, 0.9);
+
+      const width = activeMount.clientWidth || 1;
+      const height = activeMount.clientHeight || 1;
+      const camera = new THREE.PerspectiveCamera(CAMERA_FOV_DEG, width / height, 0.1, 20);
+      camera.position.set(0, CAMERA_POSITION_Y, CAMERA_POSITION_Z);
+      camera.rotation.x = (CAMERA_PITCH_DEG / 180) * Math.PI;
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      activeMount.appendChild(renderer.domElement);
+
+      const { wallDisposables } = buildEnvironment(scene);
+
+      scene.add(assets.trackMesh.clone());
+      const ballMesh = assets.ballMesh.clone();
+      scene.add(ballMesh);
+      const pinMeshes = [];
+      for (let i = 0; i < 10; i++) {
+        const pm = assets.pinMesh.clone();
+        scene.add(pm);
+        pinMeshes.push(pm);
+      }
+
+      // Idle state — no live relay currently fresh — shows the rack exactly
+      // as the last-known pin_mask says (all 10 standing by default, i.e.
+      // pinMaskRef.current === -1) and parks the ball at the foul line
+      // (BALL_LINE/BALL_HEIGHT are the same constants the real physics uses
+      // for a freshly-reset ball, so this matches what the thrower
+      // themselves sees at the very start of a turn).
+      const applyIdleState = () => {
+        ballMesh.visible = true;
+        ballMesh.position.set(0, BALL_HEIGHT, BALL_LINE);
+        ballMesh.quaternion.identity();
+        const mask = pinMaskRef.current;
+        for (let i = 0; i < 10; i++) {
+          const standing = mask === -1 || (mask & (1 << i)) !== 0;
+          pinMeshes[i].visible = standing;
+          if (standing) {
+            const pos = PIN_POSITIONS[i];
+            pinMeshes[i].position.set(pos[0], pos[1], pos[2]);
+            pinMeshes[i].quaternion.identity();
+          }
+        }
+      };
+      applyIdleState();
+
+      let raf;
+      let wasFresh = false;
+      const animate = () => {
+        raf = requestAnimationFrame(animate);
+        const relay = relayRef.current;
+        const fresh = relay.ball && Date.now() - relay.receivedAt < RELAY_STALE_MS;
+        if (fresh && !wasFresh) {
+          // Relay just went idle→active — a new throw has begun. The relay
+          // payload only carries position/rotation (not velocity), so there's
+          // no real measured speed to scale the sound by yet at this exact
+          // instant; a fixed mid-range value (BALL_VELOCITY_MIN..MAX is
+          // 3.0-6.0) is a reasonable stand-in, matching how playCrashSound's
+          // own doc comment already treats sound as "a pure nicety."
+          playReleaseSound(4.5, soundEnabledRef.current);
+        }
+        wasFresh = fresh;
+        if (fresh) {
+          ballMesh.visible = true;
+          ballMesh.position.set(relay.ball.x, relay.ball.y, relay.ball.z);
+          ballMesh.quaternion.set(relay.ball.qx, relay.ball.qy, relay.ball.qz, relay.ball.qw);
+          if (Array.isArray(relay.pins)) {
+            for (let i = 0; i < 10 && i < relay.pins.length; i++) {
+              const p = relay.pins[i];
+              if (!p || p.visible === false) {
+                pinMeshes[i].visible = false;
+                continue;
+              }
+              pinMeshes[i].visible = true;
+              pinMeshes[i].position.set(p.x, p.y, p.z);
+              pinMeshes[i].quaternion.set(p.qx, p.qy, p.qz, p.qw);
+            }
+          }
+        } else {
+          applyIdleState();
+        }
+        renderer.render(scene, camera);
+      };
+      animate();
+
+      const handleResize = () => {
+        const w = activeMount.clientWidth || 1;
+        const h = activeMount.clientHeight || 1;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      };
+      window.addEventListener('resize', handleResize);
+
+      disposeFn = () => {
+        cancelAnimationFrame(raf);
+        window.removeEventListener('resize', handleResize);
+        renderer.dispose();
+        for (const d of wallDisposables) d.dispose();
+        if (activeMount.contains(renderer.domElement)) activeMount.removeChild(renderer.domElement);
+      };
+    }).catch(() => {
+      // Best-effort — if even the lightweight visual assets fail to load
+      // for a spectator, the "waiting"/scoreboard UI around this scene still
+      // works fine; there's nothing more disruptive to fall back to here.
+    });
+
+    return () => {
+      cancelled = true;
+      if (disposeFn) disposeFn();
+    };
+  }, [isMyTurn, isOver]);
+
+  // Fires once per newly-closed strike/spare — keyed on the CURRENTLY
+  // ACTIVE THROWER's own scoresheet (not just the local viewer's), so
+  // everyone in the room hears the fanfare whenever anyone gets a
+  // strike/spare, not only the person who rolled it. During your own turn
+  // this is the exact same object as before (currentPlayer.user_id ===
+  // currentUserId), so the thrower's own experience is unchanged — this
+  // purely extends who else can hear it.
+  useEffect(() => {
+    const states = activeThrowerScores?.frame_states;
+    if (!Array.isArray(states)) return;
+    const prev = prevFrameStatesRef.current;
+    if (prev) {
+      for (let i = 0; i < states.length; i++) {
+        const wasOpen = !prev[i] || prev[i] === 0;
+        if (wasOpen && (states[i] === 1 || states[i] === 2)) {
+          playStrikeFanfare(soundEnabledRef.current);
+          hapticImpact([15, 60, 15, 60, 25]);
+          break;
+        }
+      }
+    }
+    prevFrameStatesRef.current = states;
+  }, [activeThrowerScores]);
+
+  // ── Spectator/non-thrower reactions to broadcast throw results —
+  // previously a spectator got zero audio feedback at all for anyone
+  // else's throw (only the thrower's own local physics loop played crash
+  // sounds/showed the throwLabel banner). Tracks each player's own
+  // (frame_number, throw_number, game_over) progress; when it advances for
+  // whoever's currently at bat, the exact just-recorded throw result is
+  // read straight from their scoresheet's throw_results — the same
+  // authoritative number the server already computed — rather than trying
+  // to infer "how many pins fell" from noisy relay position/mask deltas.
+  //
+  // The (frame, throw) pair alone isn't quite enough: AddThrowResult always
+  // WRITES to the pre-advance indices then advances them — EXCEPT for the
+  // 10th frame's own final bonus throw, where closeFrame's own "already at
+  // the last frame" branch sets game_over=true without ever touching
+  // FrameNumber/ThrowNumber (see bowling.go's closeFrame). That throw would
+  // otherwise be silently missed since neither index moves — caught here by
+  // also treating a false→true `game_over` transition as an advance, still
+  // reading the SAME (unmoved) indices, which is exactly where that final
+  // throw was written.
+  const throwProgressRef = useRef({});
+  useEffect(() => {
+    if (isMyTurn || isOver) return; // the thrower already gets this from their own physics loop
+    const scores = activeThrowerScores;
+    const throwerID = currentPlayer?.user_id;
+    if (!scores || throwerID == null) return;
+
+    const key = String(throwerID);
+    const prevProgress = throwProgressRef.current[key];
+    const frameNum = scores.frame_number ?? 0;
+    const throwNum = scores.throw_number ?? 0;
+    const gameOver = !!scores.game_over;
+
+    if (prevProgress) {
+      const framesAdvanced = frameNum > prevProgress.frame || (frameNum === prevProgress.frame && throwNum > prevProgress.throw);
+      const gameJustEnded = gameOver && !prevProgress.gameOver;
+      if (framesAdvanced || gameJustEnded) {
+        const raw = scores.throw_results?.[prevProgress.frame]?.[prevProgress.throw];
+        if (typeof raw === 'number') {
+          playCrashSound(raw, soundEnabledRef.current);
+          setThrowLabel(raw === 10 ? 'STRIKE!' : raw === 0 ? 'GUTTER' : `${raw} PIN${raw === 1 ? '' : 'S'}!`);
+          if (throwLabelTimerRef.current) clearTimeout(throwLabelTimerRef.current);
+          throwLabelTimerRef.current = setTimeout(() => setThrowLabel(null), 2200);
+        }
+      }
+    }
+    throwProgressRef.current[key] = { frame: frameNum, throw: throwNum, gameOver };
+  }, [isMyTurn, isOver, activeThrowerScores, currentPlayer?.user_id]);
 
   const handlePointerDown = useCallback(
     (e) => {
@@ -431,6 +947,8 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
       const velocity = dtMs > 0 ? rv.length() / (0.001 * dtMs) : 6.0;
       const angle = Math.atan2(-rv.x, -rv.z);
       physics.releaseBall(velocity, angle);
+      playReleaseSound(velocity, soundEnabledRef.current);
+      hapticImpact(Math.round(Math.min(20, 8 + velocity)));
     }
     input.pickingBall = false;
     input.positioningBall = false;
@@ -460,6 +978,13 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
               {!isOver && <p className="text-gray-400 text-sm">Frame {currentFrameForDisplay} of 10</p>}
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setSoundEnabled((v) => !v)}
+                className="text-gray-400 hover:text-white"
+                title={soundEnabled ? 'Mute sounds' : 'Unmute sounds'}
+              >
+                {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+              </button>
               <GameRulesButton gameType="bowling" />
               <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'Forfeit'}>
                 <X className="w-6 h-6" />
@@ -478,9 +1003,22 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
           )}
 
           <div className="relative flex-1 min-h-[320px]">
-            {isMyTurn && !isOver ? (
+            {throwLabel && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-1.5 rounded-full bg-black/70 text-yellow-400 font-bold text-base pointer-events-none">
+                {throwLabel}
+              </div>
+            )}
+            {/* The 3D mount is now always present — driven by real local
+                physics on the active thrower's own device (see the
+                scene-build effect above), or by the passive broadcast scene
+                (see the effect right after it) for every other room member.
+                Previously, anyone who wasn't the current thrower saw nothing
+                but a static "X is bowling… (N pins standing)" placeholder —
+                no lane, no live pins, no ball — the whole 3D scene was
+                gated behind isMyTurn. */}
+            {!isOver && <div ref={mountRef} className="absolute inset-0" />}
+            {isMyTurn && !isOver && (
               <>
-                <div ref={mountRef} className="absolute inset-0" />
                 {engineReady && (
                   <div
                     className="absolute inset-0"
@@ -501,17 +1039,10 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
                   </div>
                 )}
               </>
-            ) : (
+            )}
+            {isOver && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-400">
                 <span className="text-5xl">🎳</span>
-                {!isOver && (
-                  <p className="text-sm">
-                    {currentPlayer?.username || 'Opponent'} is bowling…{' '}
-                    <span className="text-gray-500 text-xs">
-                      ({scoresMap[String(currentPlayer?.user_id)]?.pins_standing ?? 10} pins standing)
-                    </span>
-                  </p>
-                )}
               </div>
             )}
           </div>

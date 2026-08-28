@@ -15,9 +15,18 @@ const FOUR_FOOT_R = 0.33;
 const EIGHT_FOOT_R = 0.67;
 
 const CAMERA_FOV_DEG = 45;
-const CAMERA_DISTANCE = 6;
+// Pulled back from the original 6 — the flick redesign gives a weak throw a
+// real, large approach-lane distance to fall short across (see
+// curling.go's curlingLaneApproachLength), and a stone stopping partway
+// down that lane needs to still be visible, not just clipped outside the
+// old tight, house-only framing.
+const CAMERA_DISTANCE = 11;
 const HOUSE_RADIUS = 1.9;
 const RING_CONTENT_FRACTION = 0.9;
+// Mirrors curling.go's own curlingLaneApproachLength exactly — used only for
+// drawing the visual lane strip below the house, never for any landing math
+// (that's 100% server-authoritative, same trust model as before).
+const LANE_APPROACH_LENGTH = 2.6;
 
 function ringLabel(x, y) {
   const r = Math.hypot(x, y);
@@ -26,13 +35,6 @@ function ringLabel(x, y) {
   if (r <= EIGHT_FOOT_R) return '8-FOOT';
   if (r <= 1.0) return '12-FOOT';
   return 'OUT';
-}
-
-function boardPixelRadius(viewportHeightPx) {
-  const fovRad = (CAMERA_FOV_DEG * Math.PI) / 180;
-  const worldVisibleHeight = 2 * CAMERA_DISTANCE * Math.tan(fovRad / 2);
-  const pixelsPerWorldUnit = viewportHeightPx / worldVisibleHeight;
-  return HOUSE_RADIUS * pixelsPerWorldUnit;
 }
 
 // Procedurally draws a real curling house — concentric rings alternating
@@ -109,7 +111,6 @@ export default function CurlingGame({ gameState, players = [], currentUserId, on
   const [aim, setAim] = useState({ x: 0, y: 0 });
   const [charging, setCharging] = useState(false);
   const [displayPower, setDisplayPower] = useState(0);
-  const chargeStartRef = useRef(0);
 
   // ── Three.js scene setup (once) ──────────────────────────────────────
   useEffect(() => {
@@ -142,6 +143,29 @@ export default function CurlingGame({ gameState, players = [], currentUserId, on
     const houseMat = new THREE.MeshStandardMaterial({ map: houseTexture });
     const house = new THREE.Mesh(houseGeo, houseMat);
     scene.add(house);
+
+    // Approach lane — a real visual cue for the flick redesign: a stone
+    // that falls short (or overshoots) now travels far enough to land well
+    // outside the house rings above, and this strip is what makes that
+    // distance actually legible as "a lane," not just empty background ice.
+    // Matches curling.go's curlingLaneApproachLength (same normalized
+    // scaling used everywhere else in this file for stone/house placement).
+    const laneWorldLength = LANE_APPROACH_LENGTH * HOUSE_RADIUS * RING_CONTENT_FRACTION;
+    const laneWidth = 0.55;
+    const laneGeo = new THREE.PlaneGeometry(laneWidth, laneWorldLength);
+    const laneMat = new THREE.MeshStandardMaterial({ color: 0xc3dde8 });
+    const lane = new THREE.Mesh(laneGeo, laneMat);
+    lane.position.set(0, -laneWorldLength / 2, -0.02);
+    scene.add(lane);
+
+    const laneLineGeo = new THREE.PlaneGeometry(0.02, laneWorldLength);
+    const laneLineMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+    const laneLineL = new THREE.Mesh(laneLineGeo, laneLineMat);
+    laneLineL.position.set(-laneWidth / 2, -laneWorldLength / 2, -0.01);
+    scene.add(laneLineL);
+    const laneLineR = new THREE.Mesh(laneLineGeo, laneLineMat);
+    laneLineR.position.set(laneWidth / 2, -laneWorldLength / 2, -0.01);
+    scene.add(laneLineR);
 
     const stoneGeo = new THREE.CylinderGeometry(0.09, 0.11, 0.09, 24);
     const stoneMats = {
@@ -190,6 +214,10 @@ export default function CurlingGame({ gameState, players = [], currentUserId, on
       houseTexture.dispose();
       houseGeo.dispose();
       houseMat.dispose();
+      laneGeo.dispose();
+      laneMat.dispose();
+      laneLineGeo.dispose();
+      laneLineMat.dispose();
       iceGeo.dispose();
       iceMat.dispose();
       stoneGeo.dispose();
@@ -222,11 +250,26 @@ export default function CurlingGame({ gameState, players = [], currentUserId, on
 
   // ── Animate the most recently confirmed stone sliding in ─────────────
   const lastShotKeyRef = useRef(null);
+  const [lastShotResultLabel, setLastShotResultLabel] = useState(null);
+  const lastShotResultTimerRef = useRef(null);
+  useEffect(() => () => { if (lastShotResultTimerRef.current) clearTimeout(lastShotResultTimerRef.current); }, []);
   useEffect(() => {
     if (!lastShot || lastShot.x == null) return;
     const key = `${lastShot.player_id}-${lastShot.x}-${lastShot.y}`;
     if (lastShotKeyRef.current === key) return;
     lastShotKeyRef.current = key;
+
+    // Real, direct feedback for the flick redesign's own core mechanic —
+    // players should immediately know WHY a stone landed "OUT" (never
+    // reached the house at all vs. flicked clean through it), not just see
+    // a stone stop somewhere far away with no explanation.
+    let resultText = lastShot.label;
+    if (lastShot.label === 'OUT') {
+      resultText = lastShot.y > 1.0 ? 'FELL SHORT!' : lastShot.y < -1.0 ? 'OVERSHOT!' : 'OUT';
+    }
+    setLastShotResultLabel(resultText);
+    if (lastShotResultTimerRef.current) clearTimeout(lastShotResultTimerRef.current);
+    lastShotResultTimerRef.current = setTimeout(() => setLastShotResultLabel(null), 1800);
 
     const group = stoneGroupRef.current;
     const assets = stoneAssetsRef.current;
@@ -242,59 +285,72 @@ export default function CurlingGame({ gameState, players = [], currentUserId, on
     const mesh = new THREE.Mesh(assets.geo, mat);
     mesh.rotation.x = Math.PI / 2;
     const to = new THREE.Vector3(lastShot.x * HOUSE_RADIUS * RING_CONTENT_FRACTION, lastShot.y * HOUSE_RADIUS * RING_CONTENT_FRACTION, 0.06);
-    const from = new THREE.Vector3(0, -2.3, 0.06);
+    // Starts from just past the far end of the drawn lane strip — with the
+    // flick redesign, every stone (including one that falls well short)
+    // genuinely travels a meaningful distance up the lane toward the house,
+    // so the slide-in animation should traverse that same visible distance
+    // rather than a short, fixed hop from the old close-up-only framing.
+    const from = new THREE.Vector3(0, -(LANE_APPROACH_LENGTH * HOUSE_RADIUS * RING_CONTENT_FRACTION) - 0.3, 0.06);
     mesh.position.copy(from);
     group.add(mesh);
     slidingStoneRef.current = { mesh, from, to, startTime: performance.now(), duration: 700 };
   }, [lastShot, players]);
 
-  const previewLabel = useMemo(() => ringLabel(aim.x, aim.y), [aim]);
+  // Mirrors curling.go's curlingLandingFromFlick — the deterministic,
+  // pre-wobble half only (the server still applies its own real random
+  // wobble; this is purely a live preview cue while the player is pulling
+  // back, same "client shows an estimate, server has final authority" trust
+  // model already used throughout this game).
+  const previewLanding = useMemo(() => ({
+    x: aim.x,
+    y: (1 - (charging ? displayPower : 0)) * LANE_APPROACH_LENGTH,
+  }), [aim.x, charging, displayPower]);
+  const previewLabel = useMemo(() => ringLabel(previewLanding.x, previewLanding.y), [previewLanding]);
 
-  const handleAimDrag = useCallback((clientX, clientY) => {
+  // A real flick gesture: press down anywhere on the ice, pull back
+  // (downward, away from the house at the top of the frame — a slingshot
+  // motion) to build power, drag left/right to steer, release to throw.
+  // Replaces the old hold-and-release-at-the-right-instant timing minigame
+  // entirely — power is now a direct, continuous function of how far back
+  // the player pulls, not a timing skill.
+  const FLICK_REFERENCE_FRACTION = 0.4; // fraction of the mount's height that maps to power=1.0 ("ideal") pull-back distance
+  const flickStartRef = useRef(null);
+
+  const handleFlickStart = useCallback((clientX, clientY) => {
+    if (!isMyTurn || isOver) return;
     const mount = mountRef.current;
     if (!mount) return;
     const rect = mount.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const radiusPx = boardPixelRadius(rect.height) * RING_CONTENT_FRACTION;
-    let nx = (clientX - cx) / radiusPx;
-    let ny = -(clientY - cy) / radiusPx;
-    const r = Math.hypot(nx, ny);
-    if (r > 1.15) { nx = (nx / r) * 1.15; ny = (ny / r) * 1.15; }
-    setAim({ x: nx, y: ny });
-  }, []);
-
-  const CHARGE_PERIOD_MS = 950;
-  const readTrianglePower = useCallback((elapsedMs) => {
-    const phase = (elapsedMs % CHARGE_PERIOD_MS) / CHARGE_PERIOD_MS;
-    return phase < 0.5 ? phase * 2 : (1 - phase) * 2;
-  }, []);
-
-  const startCharge = useCallback(() => {
-    if (!isMyTurn || isOver) return;
+    flickStartRef.current = { x: clientX, y: clientY, rect };
     setCharging(true);
-    chargeStartRef.current = performance.now();
+    setAim((prev) => ({ x: prev.x, y: 0 }));
   }, [isMyTurn, isOver]);
 
-  const releaseCharge = useCallback(() => {
-    setCharging((wasCharging) => {
-      if (!wasCharging) return false;
-      const elapsed = performance.now() - chargeStartRef.current;
-      onMove({ move_type: 'throw', aim_x: aim.x, aim_y: aim.y, power: readTrianglePower(elapsed) });
-      return false;
-    });
-  }, [aim, onMove, readTrianglePower]);
+  const handleFlickMove = useCallback((clientX, clientY) => {
+    const start = flickStartRef.current;
+    if (!start) return;
+    const { rect } = start;
+    const pullDy = clientY - start.y; // positive = dragged down/back = charging power
+    const power = Math.max(0, Math.min(1.5, pullDy / (rect.height * FLICK_REFERENCE_FRACTION)));
+    setDisplayPower(power);
+    const laneCenterX = rect.left + rect.width / 2;
+    let nx = ((clientX - laneCenterX) / (rect.width / 2)) * 1.15;
+    if (nx > 1.15) nx = 1.15; else if (nx < -1.15) nx = -1.15;
+    setAim({ x: nx, y: 0 });
+  }, []);
 
-  useEffect(() => {
-    if (!charging) { setDisplayPower(0); return undefined; }
-    let raf;
-    const tick = () => {
-      setDisplayPower(readTrianglePower(performance.now() - chargeStartRef.current));
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [charging, readTrianglePower]);
+  const handleFlickEnd = useCallback(() => {
+    const start = flickStartRef.current;
+    if (!start) { setCharging(false); return; }
+    flickStartRef.current = null;
+    setCharging(false);
+    setDisplayPower((finalPower) => {
+      if (finalPower > 0.03) { // ignore an accidental tap with no real pull-back
+        onMove({ move_type: 'throw', aim_x: aim.x, power: finalPower });
+      }
+      return 0;
+    });
+  }, [aim.x, onMove]);
 
   const handleForfeit = () => {
     if (winner || isOver) { onClose(); return; }
@@ -356,12 +412,23 @@ export default function CurlingGame({ gameState, players = [], currentUserId, on
 
           <div className="relative flex-1 min-h-[320px]">
             <div ref={mountRef} className="absolute inset-0" />
+            {lastShotResultLabel && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/70 text-yellow-400 font-bold text-sm pointer-events-none">
+                {lastShotResultLabel}
+              </div>
+            )}
             {!isOver && isMyTurn && (
+              // A real flick gesture, directly on the ice: press down, pull
+              // back (down/away from the house) to charge power, drag
+              // left/right to steer, release to throw — replaces the old
+              // separate "hold this button" charge meter entirely.
               <div
                 className="absolute inset-0"
-                style={{ touchAction: 'none', cursor: 'crosshair' }}
-                onPointerMove={(e) => { if (!charging) handleAimDrag(e.clientX, e.clientY); }}
-                onPointerDown={(e) => handleAimDrag(e.clientX, e.clientY)}
+                style={{ touchAction: 'none', cursor: charging ? 'grabbing' : 'grab' }}
+                onPointerDown={(e) => handleFlickStart(e.clientX, e.clientY)}
+                onPointerMove={(e) => handleFlickMove(e.clientX, e.clientY)}
+                onPointerUp={handleFlickEnd}
+                onPointerLeave={() => { if (charging) handleFlickEnd(); }}
               />
             )}
           </div>
@@ -369,22 +436,21 @@ export default function CurlingGame({ gameState, players = [], currentUserId, on
           {isMyTurn && !isOver && (
             <div className="px-5 pb-4 pt-2 shrink-0">
               <p className="text-center text-xs text-gray-400 mb-1.5">
-                Aiming: <span className="text-white font-semibold">{previewLabel}</span> — the closest stone(s) to the button win the end. Hold to charge weight, release to throw
+                {charging ? (
+                  <>Aiming: <span className="text-white font-semibold">{previewLabel}</span> — release to flick!</>
+                ) : (
+                  'Press and pull back on the ice to flick — too weak falls short, too hard overshoots'
+                )}
               </p>
               <div className="relative h-5 bg-gray-800 rounded-full overflow-hidden border border-gray-700">
                 <div
-                  className="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-400 to-blue-700"
-                  style={{ width: `${(charging ? displayPower : 0) * 100}%` }}
+                  className={`absolute inset-y-0 left-0 bg-gradient-to-r ${
+                    displayPower > 1 ? 'from-orange-400 to-red-600' : 'from-blue-400 to-blue-700'
+                  }`}
+                  style={{ width: `${Math.min(100, (charging ? displayPower : 0) * (100 / 1.3))}%` }}
                 />
+                <div className="absolute inset-y-0 w-[2px] bg-white/70" style={{ left: `${100 / 1.3}%` }} />
               </div>
-              <button
-                onPointerDown={startCharge}
-                onPointerUp={releaseCharge}
-                onPointerLeave={() => { if (charging) releaseCharge(); }}
-                className="mt-3 w-full py-2.5 rounded-lg bg-blue-700 hover:bg-blue-600 active:bg-blue-800 text-white font-bold text-sm select-none"
-              >
-                {charging ? 'Release to Throw!' : 'Hold to Charge Weight'}
-              </button>
             </div>
           )}
 

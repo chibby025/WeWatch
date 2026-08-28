@@ -1422,14 +1422,38 @@ func (h *Hub) Run() {
 			}
 
 			// 🔥 Clean up clientRegistry (must be done AFTER mutex unlock to prevent deadlock)
-            h.registryMutex.Lock()
-            if userMap, exists := h.clientRegistry[client.userID]; exists {
-                delete(userMap, client.roomID)
-                if len(userMap) == 0 {
-                    delete(h.clientRegistry, client.userID) // ✅ CORRECT
-                }
-            }
-            h.registryMutex.Unlock()
+			//
+			// CONFIRMED REAL BUG, fixed here: this used to delete
+			// userMap[client.roomID] unconditionally — correct ONLY for a
+			// genuine final disconnect, but wrong for the exact reconnect
+			// scenario supersededByNewerConnection (computed a few lines
+			// above, for the forfeit-timer decision) already detects: a
+			// newer connection for this same user+room had already
+			// overwritten this map entry with ITSELF before this old
+			// client's queued unregister event got processed. Deleting
+			// unconditionally wiped out that newer, valid registration —
+			// so BroadcastToUser (the sole delivery path for every private
+			// per-user message: hand_update for hidden-hand card games,
+			// and every sendError move-rejection reply) silently found
+			// nothing for that user in that room from that point on, with
+			// no error of any kind on either side. Confirmed live: a
+			// Dominoes player's real 7-tile hand_update was computed
+			// correctly server-side and never reached their client, and
+			// their "you must play the opening tile" rejection likewise
+			// vanished — both traced directly to this exact unconditional
+			// delete via the 🐛 BroadcastToUser MISS debug log already in
+			// place. Same fix shape as supersededByNewerConnection itself:
+			// only remove the entry if it still points at THIS client.
+			h.registryMutex.Lock()
+			if userMap, exists := h.clientRegistry[client.userID]; exists {
+				if userMap[client.roomID] == client {
+					delete(userMap, client.roomID)
+					if len(userMap) == 0 {
+						delete(h.clientRegistry, client.userID)
+					}
+				}
+			}
+			h.registryMutex.Unlock()
 
 		case message := <-h.broadcast:
 			// Broadcast message to *all* clients in *all* rooms (if needed, rarely used)
@@ -1540,14 +1564,53 @@ func (h *Hub) Run() {
 
 
 
+// volatileWSLogMarkers matches raw WS message bytes that belong to high-frequency,
+// low-value-to-log game move types (10Hz+ physics/aim/ack relays for Pool, Ping Pong,
+// Air Hockey, Jigsaw drag, DOOM/Quake relay packets, etc). Full-content logging for
+// these drowns out the rare, actually-diagnostic messages (turn changes, game_started,
+// game_ended, errors) during a debugging session — see the "reduce backend logs"
+// request after a Pool desync investigation needed a readable log, not a firehose.
+var volatileWSLogMarkers = []string{
+    `"move_type":"shot_progress"`,   // Pool — 10Hz live ball relay
+    `"move_type":"piece_drag"`,      // Jigsaw — drag relay
+    `"move_type":"state_sync"`,      // Ping Pong / Air Hockey — physics relay
+    `"move_type":"paddle_move"`,     // Ping Pong
+    `"move_type":"mallet_move"`,     // Air Hockey
+    `"move_type":"game_event"`,      // Pool — cue/aim relay
+    `"move_type":"view_ack"`,        // Pool — view-confirmation ack
+    `"type":"relay_packet"`,         // DOOM/Quake WS relay
+    `"type":"rhythm_hero_input"`,    // Rhythm Hero — per-note input relay
+    `"type":"sync_heartbeat"`,       // media playback heartbeat
+}
+
+// isVolatileWSLogMessage reports whether raw looks like one of the high-frequency
+// message types above, based on a cheap substring scan (no JSON parsing) — used only
+// to decide how much to log, never for anything that affects real message handling.
+func isVolatileWSLogMessage(raw string) bool {
+    for _, marker := range volatileWSLogMarkers {
+        if strings.Contains(raw, marker) {
+            return true
+        }
+    }
+    return false
+}
+
 // BroadcastToRoom sends a message to all clients in a specific room.
 // sender can be provided to exclude it from the broadcast (e.g., for echo suppression).
 func (h *Hub) BroadcastToRoom(roomID uint, message OutgoingMessage, sender *Client) {
-    // Debug: log broadcast enqueue
+    // Debug: log broadcast enqueue — fully silenced for volatile/high-frequency move
+    // types (Pool's 10Hz shot_progress etc). These were still printing one line per
+    // tick even after the preview was shortened, which at 10Hz for a 10-20s shot is
+    // still 100-200+ lines drowning out the actually-useful signal — the dedicated
+    // "state change" line in game_manager.go's broadcastGameStateLocked already
+    // covers what matters here (does current_turn/state_version actually change).
     if message.IsBinary {
         log.Printf("[Hub] Enqueue BroadcastToRoom room=%d binary size=%d", roomID, len(message.Data))
     } else {
-        log.Printf("[Hub] Enqueue BroadcastToRoom room=%d text size=%d preview=%s", roomID, len(message.Data), string(message.Data)[:min(len(message.Data), 200)])
+        raw := string(message.Data)
+        if !isVolatileWSLogMessage(raw) {
+            log.Printf("[Hub] Enqueue BroadcastToRoom room=%d text size=%d preview=%s", roomID, len(message.Data), raw[:min(len(raw), 200)])
+        }
     }
 	select {
 	case h.broadcastToRoom <- RoomBroadcastMessage{roomID: roomID, data: message, sender: sender}:
@@ -1889,8 +1952,16 @@ func (c *Client) readPump() {
         
 
         case websocket.TextMessage:
-            log.Printf("[readPump][DEBUG] TextMessage received: user_id=%d room_id=%d bytes=%d content=%s", c.userID, c.roomID, len(message), string(message))
-            log.Printf("📨 Text message received from user %d: %s", c.userID, string(message))
+            // Fully silenced for high-frequency/volatile move types (Pool
+            // shot_progress, Ping Pong/Air Hockey physics relay, etc) — see
+            // isVolatileWSLogMessage. A per-tick "hot-path message" line was still
+            // too much volume for a 10-20s shot at 10Hz (100-200+ lines); the
+            // dedicated state-change line in broadcastGameStateLocked is the
+            // signal that actually matters (does current_turn/state_version move).
+            raw := string(message)
+            if !isVolatileWSLogMessage(raw) {
+                log.Printf("[readPump][DEBUG] TextMessage received: user_id=%d room_id=%d bytes=%d content=%s", c.userID, c.roomID, len(message), raw)
+            }
             c.handleMessage(message)
         
         case websocket.BinaryMessage:
@@ -3129,7 +3200,9 @@ func (client *Client) handleMessage(message []byte) {
         return
     }
 
-    log.Printf("[handleMessage] 📋 Message type: '%s' from user %d", msg.Type, client.userID)
+    if !isVolatileWSLogMessage(string(message)) {
+        log.Printf("[handleMessage] 📋 Message type: '%s' from user %d", msg.Type, client.userID)
+    }
 
     // ✅ Handle call-related messages (lobby only, roomID = 0)
     if client.roomID == 0 {

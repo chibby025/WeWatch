@@ -37,6 +37,11 @@ const GAME_LABELS = {
   curling: 'Curling',
   slice_frenzy: 'Slice Frenzy',
   skeeball: 'Skeeball',
+  tank_battle: 'Tank Battle',
+  bomberman: 'Bomberman',
+  football: 'Football',
+  blob_battle: 'Blob Battle',
+  hide_seek: 'Hide & Seek',
 };
 
 /**

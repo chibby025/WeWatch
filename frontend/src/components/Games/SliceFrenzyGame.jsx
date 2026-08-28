@@ -23,12 +23,237 @@ const STARTING_LIVES = 3;
 const TRAIL_MAX_AGE_MS = 160;
 const TRAIL_MAX_POINTS = 24;
 
-const FRUIT_TYPES = [
-  { color: '#e0403a', accent: '#8a2420', label: 'apple' },
-  { color: '#f2941f', accent: '#a85f0f', label: 'orange' },
-  { color: '#f5d020', accent: '#b89a10', label: 'lemon' },
-  { color: '#6fbf3a', accent: '#3f7a1e', label: 'melon' },
-  { color: '#8a3f9e', accent: '#552266', label: 'plum' },
+// Every entry gets its own draw(ctx, r) for the WHOLE (pre-slice) shape,
+// called pre-translated/pre-rotated to the object's own origin — genuine
+// silhouette variety, not just a recolored circle. color/accent are still
+// used by spawnSliceParticles and the shared sliced-half fallback (drawn as
+// two separating half-circles of that color regardless of the whole shape's
+// own silhouette — a deliberate, proportionate simplification: the WHOLE
+// shape is what players actually see falling/flying and aim at, and is what
+// "variety of things one can slice" is really asking for; a fully custom
+// per-shape split-halves animation for every one of these would be a much
+// larger, lower-value effort for a few extra frames of a brief (~0.6s)
+// slice animation).
+function drawRoundFruit(ctx, r, color, accent) {
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.3, -r * 0.35, r * 0.28, r * 0.16, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+const SLICE_TARGETS = [
+  {
+    label: 'apple', color: '#e0403a', accent: '#8a2420',
+    draw: (ctx, r) => drawRoundFruit(ctx, r, '#e0403a', '#8a2420'),
+  },
+  {
+    label: 'orange', color: '#f2941f', accent: '#a85f0f',
+    draw: (ctx, r) => drawRoundFruit(ctx, r, '#f2941f', '#a85f0f'),
+  },
+  {
+    label: 'plum', color: '#8a3f9e', accent: '#552266',
+    draw: (ctx, r) => drawRoundFruit(ctx, r, '#8a3f9e', '#552266'),
+  },
+  {
+    // A genuine watermelon WEDGE, not a solid circle — green rind, red
+    // flesh, black seeds — the classic slicer-game silhouette.
+    label: 'watermelon', color: '#e0403a', accent: '#2f7a2f',
+    draw: (ctx, r) => {
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, r, -0.55, 0.55);
+      ctx.closePath();
+      ctx.fillStyle = '#e0403a';
+      ctx.fill();
+      ctx.strokeStyle = '#fbeed2';
+      ctx.lineWidth = r * 0.14;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.94, -0.5, 0.5);
+      ctx.stroke();
+      ctx.strokeStyle = '#2f7a2f';
+      ctx.lineWidth = r * 0.16;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, -0.5, 0.5);
+      ctx.stroke();
+      ctx.fillStyle = '#1a1a1a';
+      for (const [sx, sy] of [[0.35, -0.15], [0.5, 0.05], [0.35, 0.25], [0.15, -0.3], [0.15, 0.3]]) {
+        ctx.beginPath();
+        ctx.ellipse(sx * r, sy * r, r * 0.05, r * 0.08, sy, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    },
+  },
+  {
+    // Crescent banana — a genuinely non-round silhouette.
+    label: 'banana', color: '#f5d020', accent: '#b89a10',
+    draw: (ctx, r) => {
+      ctx.beginPath();
+      ctx.arc(0, r * 0.15, r * 1.15, Math.PI * 1.15, Math.PI * 1.85);
+      ctx.arc(0, -r * 0.05, r * 0.68, Math.PI * 1.9, Math.PI * 1.1, true);
+      ctx.closePath();
+      ctx.fillStyle = '#f5d020';
+      ctx.fill();
+      ctx.strokeStyle = '#b89a10';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.fillStyle = '#6b4a12';
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.65, -r * 0.55, r * 0.08, r * 0.14, 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    },
+  },
+  {
+    // Pineapple — oval body, spiky green crown, criss-cross diamond texture.
+    label: 'pineapple', color: '#e8a53a', accent: '#a8721a',
+    draw: (ctx, r) => {
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.1, r * 0.78, r * 0.98, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#e8a53a';
+      ctx.fill();
+      ctx.strokeStyle = '#a8721a';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(90,60,10,0.5)';
+      ctx.lineWidth = 1.5;
+      for (let i = -2; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(-r * 0.7, r * (0.1 + i * 0.28));
+        ctx.lineTo(r * 0.7, r * (0.1 + i * 0.28 - 0.4));
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#3f7a2f';
+      for (const dx of [-0.35, 0, 0.35]) {
+        ctx.beginPath();
+        ctx.moveTo(dx * r, -r * 0.85);
+        ctx.lineTo(dx * r - r * 0.14, -r * 1.5);
+        ctx.lineTo(dx * r + r * 0.14, -r * 1.5);
+        ctx.closePath();
+        ctx.fill();
+      }
+    },
+  },
+  {
+    // Strawberry — a teardrop/heart taper with seed dots and a green cap.
+    label: 'strawberry', color: '#e8304a', accent: '#9c1b30',
+    draw: (ctx, r) => {
+      ctx.beginPath();
+      ctx.moveTo(0, r * 1.05);
+      ctx.quadraticCurveTo(r * 1.05, r * 0.35, r * 0.55, -r * 0.35);
+      ctx.quadraticCurveTo(r * 0.25, -r * 0.7, 0, -r * 0.35);
+      ctx.quadraticCurveTo(-r * 0.25, -r * 0.7, -r * 0.55, -r * 0.35);
+      ctx.quadraticCurveTo(-r * 1.05, r * 0.35, 0, r * 1.05);
+      ctx.closePath();
+      ctx.fillStyle = '#e8304a';
+      ctx.fill();
+      ctx.strokeStyle = '#9c1b30';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.fillStyle = '#3f7a2f';
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.3, -r * 0.35);
+      ctx.lineTo(0, -r * 0.85);
+      ctx.lineTo(r * 0.3, -r * 0.35);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#f5d98a';
+      for (const [sx, sy] of [[-0.25, 0.1], [0.25, 0.1], [0, 0.45], [-0.35, 0.5], [0.35, 0.5]]) {
+        ctx.beginPath();
+        ctx.ellipse(sx * r, sy * r, r * 0.05, r * 0.07, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    },
+  },
+  {
+    // Coconut — rough brown sphere with 3 dark "eyes" and light fiber lines.
+    label: 'coconut', color: '#7a5230', accent: '#4a3018',
+    draw: (ctx, r) => {
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#7a5230';
+      ctx.fill();
+      ctx.strokeStyle = '#4a3018';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(200,170,130,0.35)';
+      ctx.lineWidth = 1.5;
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#2a1a0c';
+      for (const [sx, sy] of [[0, -0.25], [-0.22, 0.15], [0.22, 0.15]]) {
+        ctx.beginPath();
+        ctx.arc(sx * r, sy * r, r * 0.09, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    },
+  },
+  {
+    // Grape cluster — several small circles, not one big fruit at all.
+    label: 'grapes', color: '#6a3f9e', accent: '#3f2266',
+    draw: (ctx, r) => {
+      const spots = [[0, -0.4, 0.32], [-0.4, -0.05, 0.34], [0.4, -0.05, 0.34], [0, 0.32, 0.36], [-0.35, 0.5, 0.3], [0.35, 0.5, 0.3]];
+      for (const [sx, sy, sr] of spots) {
+        ctx.beginPath();
+        ctx.arc(sx * r, sy * r, sr * r, 0, Math.PI * 2);
+        ctx.fillStyle = '#6a3f9e';
+        ctx.fill();
+        ctx.strokeStyle = '#3f2266';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.beginPath();
+        ctx.arc(sx * r - sr * r * 0.3, sy * r - sr * r * 0.3, sr * r * 0.25, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    },
+  },
+  {
+    // Doughnut — a ring with pastel sprinkles. A deliberately non-fruit
+    // sliceable object, per the request to broaden variety beyond fruit.
+    label: 'doughnut', color: '#d68a4a', accent: '#a85f2a',
+    draw: (ctx, r) => {
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2, true);
+      ctx.fillStyle = '#e8b090';
+      ctx.fill('evenodd');
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.94, 0, Math.PI * 2);
+      ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2, true);
+      ctx.fillStyle = '#d68a4a';
+      ctx.fill('evenodd');
+      ctx.strokeStyle = '#a85f2a';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
+      ctx.stroke();
+      const sprinkleColors = ['#e8304a', '#3fa8e8', '#6fbf3a', '#f5d020', '#e0403a'];
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2 + 0.3;
+        const rad = r * 0.7;
+        ctx.save();
+        ctx.translate(Math.cos(a) * rad, Math.sin(a) * rad);
+        ctx.rotate(a + Math.random() * 1.2);
+        ctx.fillStyle = sprinkleColors[i % sprinkleColors.length];
+        ctx.fillRect(-r * 0.09, -r * 0.02, r * 0.18, r * 0.04);
+        ctx.restore();
+      }
+    },
+  },
 ];
 
 function mkGame(width, height) {
@@ -61,7 +286,7 @@ function spawnObject(g) {
   const t = 0.55 + Math.random() * 0.25; // time-to-apex, seconds — controls arc shape
   const vy = -Math.sqrt(2 * GRAVITY * Math.max(40, y - apexY));
   const vx = (targetX - x) / (t * 2);
-  const kindIdx = Math.floor(Math.random() * FRUIT_TYPES.length);
+  const kindIdx = Math.floor(Math.random() * SLICE_TARGETS.length);
   g.objects.push({
     id: g.nextId++,
     isBomb,
@@ -76,7 +301,7 @@ function spawnObject(g) {
 }
 
 function spawnSliceParticles(g, obj, angle) {
-  const kind = obj.isBomb ? { color: '#333' } : FRUIT_TYPES[obj.kind];
+  const kind = obj.isBomb ? { color: '#333' } : SLICE_TARGETS[obj.kind];
   for (let i = 0; i < 10; i++) {
     const a = angle + (Math.random() - 0.5) * Math.PI;
     const speed = 60 + Math.random() * 160;
@@ -215,7 +440,7 @@ function drawGame(ctx, g, w, h) {
       const spread = age * 90;
       const drop = age * age * 220;
       ctx.rotate(obj.sliceAngle + Math.PI / 2);
-      const kind = obj.isBomb ? { color: '#2b2b2b', accent: '#111' } : FRUIT_TYPES[obj.kind];
+      const kind = obj.isBomb ? { color: '#2b2b2b', accent: '#111' } : SLICE_TARGETS[obj.kind];
       for (const side of [-1, 1]) {
         ctx.save();
         ctx.translate(side * spread * 0.5, drop);
@@ -254,18 +479,7 @@ function drawGame(ctx, g, w, h) {
       ctx.fill();
     } else {
       ctx.rotate(obj.rotation);
-      const kind = FRUIT_TYPES[obj.kind];
-      ctx.beginPath();
-      ctx.arc(0, 0, obj.radius, 0, Math.PI * 2);
-      ctx.fillStyle = kind.color;
-      ctx.fill();
-      ctx.strokeStyle = kind.accent;
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.beginPath();
-      ctx.ellipse(-obj.radius * 0.3, -obj.radius * 0.35, obj.radius * 0.28, obj.radius * 0.16, -0.5, 0, Math.PI * 2);
-      ctx.fill();
+      SLICE_TARGETS[obj.kind].draw(ctx, obj.radius);
     }
     ctx.restore();
   }

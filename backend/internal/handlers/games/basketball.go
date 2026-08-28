@@ -136,9 +136,33 @@ func basketballNextActiveIndexFrom(gameState *GameSessionState, fromIdx int) int
 func (gm *GameManager) processBasketballMove(gameState *GameSessionState, playerID uint, moveType string, moveData map[string]interface{}) (gameOver bool, winnerID *uint, err error) {
 	ensureBasketballState(gameState)
 
+	// shoot_progress: a live, ~10Hz relay of the shooter's own ball position
+	// while it's airborne (Ball.state === 'shot' on the sending client — see
+	// BasketballGame.jsx), so spectators see the actual shot arc in
+	// near-real-time instead of just a static "X is shooting…" placeholder
+	// until the result lands. Mirrors bowling.go's own throw_progress relay
+	// exactly: no authority over make/miss at all (that's still decided
+	// purely by the final "shoot" move below), never persisted to the DB
+	// (volatileRT in game_manager.go), and turn-gate-exempt so a straggling
+	// packet arriving just after the turn has already passed isn't rejected.
+	if moveType == "shoot_progress" {
+		ball, ok := moveData["ball"].(map[string]interface{})
+		if !ok {
+			return false, nil, fmt.Errorf("missing ball")
+		}
+		gameState.GameData["shoot_progress"] = map[string]interface{}{"ball": ball}
+		return false, nil, nil
+	}
+
 	if moveType != "shoot" {
 		return false, nil, fmt.Errorf("unknown basketball move type: %s", moveType)
 	}
+
+	// The shot that's about to be resolved below supersedes any in-flight
+	// relay snapshot — clear it so a late joiner's rehydration (or the next
+	// shot's own first relay tick) never sees stale mid-flight ball data
+	// sitting next to a shot that's already fully decided.
+	delete(gameState.GameData, "shoot_progress")
 
 	powerF, ok := moveData["power"].(float64)
 	if !ok {

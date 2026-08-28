@@ -1,5 +1,6 @@
 // src/components/Games/GameOverlay.jsx
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import GameStartInfoModal from './GameStartInfoModal';
 import TicTacToeGame from './TicTacToeGame';
 import RockPaperScissorsGame from './RockPaperScissorsGame';
 import ChessGame from './ChessGame';
@@ -12,7 +13,7 @@ import CrazyEightsGame from './CrazyEightsGame';
 import DominoesGame from './DominoesGame';
 import DartsGame from './DartsGame';
 import BowlingGame from './BowlingGame';
-import BasketballGame from './BasketballGame';
+const BasketballGame = lazy(() => import('./BasketballGame'));
 import ArcheryGame from './ArcheryGame';
 import CurlingGame from './CurlingGame';
 import LudoGame from './LudoGame';
@@ -60,9 +61,47 @@ import TugOfWarGame from './TugOfWarGame';
 // import RedLightGreenLightGame from './RedLightGreenLightGame'; // temporarily removed
 import SudokuGame from './SudokuGame';
 import PingPongGame from './PingPongGame';
+import TankBattleGame from './TankBattleGame';
+import BombermanGame from './BombermanGame';
+const FootballGame = lazy(() => import('./FootballGame'));
+import BlobBattleGame from './BlobBattleGame';
+import HideSeekGame from './HideSeekGame';
 import AirHockeyGame from './AirHockeyGame';
 
-export default function GameOverlay({ activeGame, currentUserId, roomId, sessionId, onMove, onClose, onEndGame, onPlayAgain, onPostResult, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore, gameErrorMsg, gameErrorKey, onRhythmHeroBroadcast, rhythmHeroLiveInfo, rhythmHeroSelectingInfo, rhythmHeroScoreInfo, rhythmHeroLeaderboard, registerRhythmHeroInputReceiver, registerRhythmHeroCheerReceiver, currentUsername }) {
+// The brief poster+instructions intro (GameStartInfoModal) needs to show
+// once per genuinely NEW game start — never on a reconnect/rehydration
+// re-render of the same session, which would otherwise re-trigger it every
+// time this component remounts mid-game. This thin wrapper owns that
+// one-shot timing/tracking and renders the intro as an overlay ON TOP of
+// the real game overlay (mounted underneath immediately, unaffected by the
+// intro's own show/hide) — every game gets this for free, no per-game
+// wiring needed.
+export default function GameOverlay(props) {
+  const { activeGame } = props;
+  const [showIntro, setShowIntro] = useState(false);
+  const shownForSessionRef = useRef(null);
+
+  useEffect(() => {
+    const sessionId = activeGame?.game_session_id;
+    if (sessionId == null) return;
+    if (shownForSessionRef.current === sessionId) return;
+    shownForSessionRef.current = sessionId;
+    setShowIntro(true);
+  }, [activeGame?.game_session_id]);
+
+  if (!activeGame) return null;
+
+  return (
+    <>
+      <GameOverlayInner {...props} />
+      {showIntro && (
+        <GameStartInfoModal gameType={activeGame.game_type} onDismiss={() => setShowIntro(false)} />
+      )}
+    </>
+  );
+}
+
+function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove, onClose, onEndGame, onPlayAgain, onPostResult, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore, gameErrorMsg, gameErrorKey, onRhythmHeroBroadcast, rhythmHeroLiveInfo, rhythmHeroSelectingInfo, rhythmHeroScoreInfo, rhythmHeroLeaderboard, registerRhythmHeroInputReceiver, registerRhythmHeroCheerReceiver, currentUsername }) {
   if (!activeGame) return null;
 
   const handleMove = (moveData) => {
@@ -233,15 +272,29 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, session
 
     case 'basketball':
       return (
-        <BasketballGame
-          gameState={activeGame}
-          players={activeGame.players}
-          currentUserId={currentUserId}
-          onMove={handleMove}
-          onClose={onClose}
-          onEndGame={onEndGame}
-          onPostResult={onPostResult}
-        />
+        <Suspense
+          fallback={(
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+              <div className="flex flex-col items-center gap-4">
+                <div className="relative w-16 h-16">
+                  <span className="absolute inset-0 flex items-center justify-center text-4xl">🏀</span>
+                  <div className="absolute inset-0 rounded-full border-4 border-gray-700 border-t-orange-500 animate-spin" />
+                </div>
+                <p className="text-white text-sm font-medium">Loading Basketball…</p>
+              </div>
+            </div>
+          )}
+        >
+          <BasketballGame
+            gameState={activeGame}
+            players={activeGame.players}
+            currentUserId={currentUserId}
+            onMove={handleMove}
+            onClose={onClose}
+            onEndGame={onEndGame}
+            onPostResult={onPostResult}
+          />
+        </Suspense>
       );
 
     case 'archery':
@@ -620,6 +673,92 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, session
           onClose={onClose}
           onEndGame={onEndGame}
           onPostResult={onPostResult}
+        />
+      );
+
+    case 'tank_battle':
+      // Real-time 2-player PvP, same shape as ping_pong (gameState/players
+      // props, not the arcade hot-seat shape) — each tank is self-controlled
+      // and self-relayed, no single physics authority needed (see
+      // tank_battle.go's file-level architecture note).
+      return (
+        <TankBattleGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'bomberman':
+      // Real-time N-player (2-4) grid duel, same shape as tank_battle —
+      // each character is self-controlled and self-relayed; whoever places
+      // a bomb is the sole authority over that bomb's explosion outcome
+      // (see bomberman.go's file-level architecture note).
+      return (
+        <BombermanGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'football':
+      // Single-player 3D arcade match (host vs AI, forked from
+      // world-cup-arena) — host-only-ever, same shape as DOOM/Golf. No
+      // server-side move logic at all, so no onMove/onPostResult wiring.
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <FootballGame
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
+            hostUsername={activeGame.players?.find((p) => p.user_id === activeGame.host_id)?.username}
+          />
+        </Suspense>
+      );
+
+    case 'blob_battle':
+      // Real-time N-player (2-8) Agar.io-style free-for-all — mass is
+      // authoritatively tracked server-side, not self-reported (see
+      // blob_battle.go's file-level note on why this game breaks from the
+      // "casual trust" model everywhere else in this arcade layer).
+      return (
+        <BlobBattleGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'hide_seek':
+      // Real-time N-player (2-8) hidden-role game — the first genuinely
+      // asymmetric-information game in this arcade layer, and the only
+      // one needing gameErrorMsg/gameErrorKey (for surfacing "that spot is
+      // already taken," the one common rejection a Prop has no client-side
+      // way to predict — see hide_seek.go's file-level note).
+      return (
+        <HideSeekGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+          gameErrorMsg={gameErrorMsg}
+          gameErrorKey={gameErrorKey}
         />
       );
 

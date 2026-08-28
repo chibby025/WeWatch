@@ -62,17 +62,72 @@ func curlingRingLabel(x, y float64) string {
 
 // curlingWobble is the identical mechanic to dartsWobble/archeryWobble —
 // kept as its own copy so each game's curve can be tuned independently.
-func curlingWobble(power float64) (dx, dy float64) {
-	if power > 1 {
-		power = 1
+// `quality` is 0-1 (1 = tightest grouping) — see curlingLandingFromFlick's
+// own doc comment for how a raw flick power gets turned into a quality
+// value before reaching here.
+func curlingWobble(quality float64) (dx, dy float64) {
+	if quality > 1 {
+		quality = 1
+	}
+	if quality < 0 {
+		quality = 0
+	}
+	maxWobble := 0.35*(1-quality) + 0.02
+	angle := rand.Float64() * 2 * math.Pi
+	radius := rand.Float64() * maxWobble
+	return math.Cos(angle) * radius, math.Sin(angle) * radius
+}
+
+// curlingLaneApproachLength is how far (in the same normalized units as the
+// house's own radius-1.0 boundary) a stone travels for each unit of flick
+// power below the "ideal" value of 1.0 that lands it exactly on the button
+// line. Deliberately large relative to the house's own radius (1.0) — a
+// materially weak or overly hard flick lands well outside the house
+// (rendered/scored as "OUT"), not just imprecisely within it. This is the
+// literal "longer lane before the circle" the redesign asked for: distance
+// traveled is now a real, continuous dimension a weak throw can fail to
+// cover, not just a cosmetic accuracy multiplier on a fixed landing spot.
+const curlingLaneApproachLength = 2.6
+
+// curlingLandingFromFlick converts a lateral aim (aimX, same -1.15..1.15
+// clamp as before — now purely "which side of the sheet," never a distance)
+// and a flick power (0 = no flick at all, 1.0 = the "ideal" flick that
+// lands the stone exactly on the button line, >1 = flicked too hard and
+// slides past it) into a real landing position plus how imprecise that
+// flick was.
+//
+// power < 1 stops the stone short — y > 0, a positive distance still
+// remaining between the stone and the button, growing with how far under
+// power the flick was. power > 1 overshoots past the button — y < 0,
+// through and beyond the house on the far side. Either direction of miss
+// also widens the wobble (curlingQuality shrinks the further power strays
+// from the 1.0 ideal), so a badly-judged flick is doubly punished: it lands
+// far from the button AND lands imprecisely, exactly mirroring how a
+// mistimed dartsWobble/archeryWobble release already works for those games.
+func curlingLandingFromFlick(aimX, power float64) (landX, landY float64) {
+	if aimX > 1.15 {
+		aimX = 1.15
+	} else if aimX < -1.15 {
+		aimX = -1.15
 	}
 	if power < 0 {
 		power = 0
 	}
-	maxWobble := 0.35*(1-power) + 0.02
-	angle := rand.Float64() * 2 * math.Pi
-	radius := rand.Float64() * maxWobble
-	return math.Cos(angle) * radius, math.Sin(angle) * radius
+
+	y := (1 - power) * curlingLaneApproachLength
+	deviation := power - 1
+	if deviation < 0 {
+		deviation = -deviation
+	}
+	quality := 1 - deviation
+	if quality < 0 {
+		quality = 0
+	} else if quality > 1 {
+		quality = 1
+	}
+
+	wx, wy := curlingWobble(quality)
+	return aimX + wx, y + wy
 }
 
 func ensureCurlingState(gameState *GameSessionState) {
@@ -98,20 +153,12 @@ func (gm *GameManager) processCurlingMove(gameState *GameSessionState, playerID 
 	switch moveType {
 	case "throw":
 		aimX, _ := moveData["aim_x"].(float64)
-		aimY, _ := moveData["aim_y"].(float64)
 		power, ok := moveData["power"].(float64)
 		if !ok {
 			return false, nil, fmt.Errorf("missing power")
 		}
-		aimR := math.Hypot(aimX, aimY)
-		if aimR > 1.15 {
-			scale := 1.15 / aimR
-			aimX *= scale
-			aimY *= scale
-		}
 
-		wx, wy := curlingWobble(power)
-		landX, landY := aimX+wx, aimY+wy
+		landX, landY := curlingLandingFromFlick(aimX, power)
 		label := curlingRingLabel(landX, landY)
 
 		stonesThisEnd, _ := gameState.GameData["stones_this_end"].(map[string]interface{})

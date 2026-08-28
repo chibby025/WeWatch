@@ -456,12 +456,16 @@ func TestPoolShotProgressSkipsMalformedEntries(t *testing.T) {
 	}
 }
 
-// TestPoolShotProgressRejectsOutOfTurn confirms the generic ProcessMove turn
-// gate already correctly restricts shot_progress to the current shooter —
-// pool is not in simultaneousGames, so this is free correctness inherited
-// from the existing dispatch path, not something processPoolShotProgress
-// itself needs to check.
-func TestPoolShotProgressRejectsOutOfTurn(t *testing.T) {
+// TestPoolShotProgressAcceptedRegardlessOfTurn confirms shot_progress is
+// exempt from the generic ProcessMove turn gate, same as view_ack — a real,
+// confirmed bug (reported live: "a lot of toast messages saying 'wrong
+// move: not your turn'... this isn't necessary in the pool game") where a
+// straggling shot_progress packet arriving a beat after CurrentTurn had
+// already advanced (normal network latency, or the gap between the client's
+// own allStationary() check and the backend processing the final report)
+// was rejected and surfaced as a confusing user-facing toast, even though
+// shot_progress has zero gameplay effect regardless of who sends it.
+func TestPoolShotProgressAcceptedRegardlessOfTurn(t *testing.T) {
 	gs := makeTestPoolState(2)
 	gm := &GameManager{activeGames: map[uint]*GameSessionState{1: gs}}
 	move := map[string]interface{}{
@@ -470,12 +474,45 @@ func TestPoolShotProgressRejectsOutOfTurn(t *testing.T) {
 		},
 	}
 	// gs.CurrentTurn is 0 (player index 0) — sending as player 1 (index 1)
-	// must be rejected by ProcessMove's own turn check, before it ever
-	// reaches processPoolShotProgress (and before any DB access, since the
-	// turn check runs first — safe to leave gm.db nil for this test).
+	// must NOT be rejected on turn grounds; it's a pure ephemeral relay.
 	err := gm.ProcessMove(1, gs.Players[1].UserID, "shot_progress", move)
+	if err != nil {
+		t.Fatalf("expected shot_progress from the non-current player to be accepted, got: %v", err)
+	}
+}
+
+// TestPoolGameEventAcceptedRegardlessOfTurn mirrors the shot_progress test
+// above for the other cosmetic relay move type (cue/aim-stick state) — same
+// exemption, same real-world race, same fix.
+func TestPoolGameEventAcceptedRegardlessOfTurn(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{activeGames: map[uint]*GameSessionState{1: gs}}
+	move := map[string]interface{}{"payload": "opaque-aim-state"}
+	err := gm.ProcessMove(1, gs.Players[1].UserID, "game_event", move)
+	if err != nil {
+		t.Fatalf("expected game_event from the non-current player to be accepted, got: %v", err)
+	}
+}
+
+// TestPoolShotRejectsOutOfTurn is the positive control for the two tests
+// above — confirms the turn gate itself is still very much alive for the one
+// move type that actually matters: a real "shot" report from the
+// non-current player must still be rejected, unaffected by exempting the
+// purely cosmetic relay move types.
+func TestPoolShotRejectsOutOfTurn(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{activeGames: map[uint]*GameSessionState{1: gs}}
+	move := map[string]interface{}{
+		"pocketed":       []interface{}{},
+		"cue_scratched":  false,
+		"cue_x":          0.5,
+		"cue_y":          0.5,
+		"first_contact":  float64(1),
+		"ball_positions": map[string]interface{}{},
+	}
+	err := gm.ProcessMove(1, gs.Players[1].UserID, "shot", move)
 	if err == nil {
-		t.Fatal("expected shot_progress from the non-current player to be rejected")
+		t.Fatal("expected a real shot move from the non-current player to still be rejected")
 	}
 }
 
@@ -597,6 +634,67 @@ func TestPoolLastBallAndEightInSameShotWins(t *testing.T) {
 	}
 }
 
+// TestPoolEightBallFirstContactBeforeGroupClearedIsFoul is the regression
+// test for a real, confirmed bug: the "wrong first contact" foul check
+// unconditionally exempted the 8-ball ("ballType != 'eight'"), meaning a
+// player could hit the 8-ball FIRST — before ever clearing their own group —
+// with zero foul, contradicting real 8-ball rules (hitting the money ball
+// first is only legal once your group is fully cleared). Reported live:
+// "sometimes the foul is wrong, it can sometimes say I hit opponent's ball
+// when I didn't" — the exact reverse gap in the same block of code.
+func TestPoolEightBallFirstContactBeforeGroupClearedIsFoul(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{}
+	p0 := gs.Players[0].UserID
+
+	// p0 is "solids", has only cleared 1-6 — ball 7 still on the table.
+	gs.GameData["breaking"] = false
+	gs.GameData["open_table"] = false
+	gs.GameData["p0_type"] = "solids"
+	gs.GameData["p1_type"] = "stripes"
+	gs.GameData["pocketed"] = []interface{}{float64(1), float64(2), float64(3), float64(4), float64(5), float64(6)}
+	gs.CurrentTurn = 0
+
+	move := baseShotMove()
+	move["first_contact"] = float64(8) // hits the 8-ball first, pockets nothing
+	if _, _, err := gm.processPoolMove(gs, p0, "shot", move); err != nil {
+		t.Fatalf("shot: %v", err)
+	}
+	if foul, _ := gs.GameData["last_foul"].(string); foul != "wrong_first_contact" {
+		t.Errorf("expected last_foul=wrong_first_contact for hitting the 8-ball before clearing your group, got %q", foul)
+	}
+	if gs.CurrentTurn != 1 {
+		t.Errorf("expected turn to pass to p1 on this foul, got %d", gs.CurrentTurn)
+	}
+}
+
+// TestPoolEightBallFirstContactAfterGroupClearedIsLegal is the positive
+// control for the fix above — once a player HAS fully cleared their own
+// group, hitting the 8-ball first is completely legal (it's the only ball
+// left to shoot at), and must not be flagged as a foul.
+func TestPoolEightBallFirstContactAfterGroupClearedIsLegal(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{}
+	p0 := gs.Players[0].UserID
+
+	// p0 is "solids", has cleared all 7 solids already — only the 8 remains.
+	gs.GameData["breaking"] = false
+	gs.GameData["open_table"] = false
+	gs.GameData["p0_type"] = "solids"
+	gs.GameData["p1_type"] = "stripes"
+	gs.GameData["pocketed"] = []interface{}{float64(1), float64(2), float64(3), float64(4), float64(5), float64(6), float64(7)}
+	gs.CurrentTurn = 0
+
+	move := baseShotMove()
+	move["first_contact"] = float64(8) // hits the 8-ball first — legal now, misses the pot
+	if _, _, err := gm.processPoolMove(gs, p0, "shot", move); err != nil {
+		t.Fatalf("shot: %v", err)
+	}
+	if foul, _ := gs.GameData["last_foul"].(string); foul != "" {
+		t.Errorf("expected no foul for hitting the 8-ball first after fully clearing your group, got %q", foul)
+	}
+}
+
 // Regression test for a real bug found while verifying the fix above live:
 // both eight-ball win/loss branches used to `return` before ever reaching
 // the code that merges newlyPocketed into GameData["pocketed"] and persists
@@ -699,4 +797,245 @@ func TestPoolEightBallShotPersistsPocketedAndBallPositions(t *testing.T) {
 			t.Error("expected ball_positions to be persisted even on the illegal-loss path")
 		}
 	})
+}
+
+// --- View-confirmation (state_version / view_ack) ---
+//
+// Regression coverage for a real, confirmed bug: PoolGame.jsx's
+// set_interactive postMessage lived in a SEPARATE useEffect keyed only on
+// isMyTurn — but a legal pocket keeps the same player's turn (CurrentTurn
+// unchanged), so isMyTurn never toggles and that effect never re-fired.
+// Meanwhile the sync_state effect DID re-fire (ball_positions genuinely
+// changed), plausibly resetting the embedded engine's own internal
+// interactive/aim-controller state as a side effect of repositioning balls.
+// Net effect: after a legal-pocket "2nd chance," the shooter's own iframe
+// silently stopped being interactive — their cue stopped emitting
+// game_event (nothing to broadcast) and they couldn't take their next shot
+// at all (so ball_positions never updated again either). state_version
+// exists so every client (and this test suite) has a single number to
+// confirm "did the authoritative state actually change here" independent
+// of whatever any one frontend effect did or didn't do with it.
+
+func TestPoolStateVersionStartsAtZero(t *testing.T) {
+	data := poolInitialGameData()
+	if data["state_version"] != float64(0) {
+		t.Fatalf("expected state_version=0 at game start, got %v", data["state_version"])
+	}
+	acks, ok := data["view_acks"].(map[string]interface{})
+	if !ok || len(acks) != 0 {
+		t.Fatalf("expected an empty view_acks map at game start, got %v", data["view_acks"])
+	}
+}
+
+// TestPoolStateVersionIncrementsAcrossLegalPocketContinuation directly
+// exercises the exact real-world scenario the bug was reported against: a
+// player legally pockets a ball (keeping their own turn), then takes a
+// SECOND shot on that same "2nd chance" turn. Both shots must each bump
+// state_version — confirming the authoritative state genuinely does keep
+// changing across a same-player continuation, which is what a client-side
+// fix needs to react to (the bug was that the FRONTEND failed to react to
+// this, not that the backend ever stopped producing it).
+func TestPoolStateVersionIncrementsAcrossLegalPocketContinuation(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{}
+	p0 := gs.Players[0].UserID
+
+	firstShot := baseShotMove()
+	firstShot["pocketed"] = []interface{}{float64(3)}
+	firstShot["first_contact"] = float64(3)
+	if _, _, err := gm.processPoolMove(gs, p0, "shot", firstShot); err != nil {
+		t.Fatalf("first shot: %v", err)
+	}
+	if gs.CurrentTurn != 0 {
+		t.Fatalf("expected p0 to keep the turn after a legal pocket (the '2nd chance' scenario), got turn index %d", gs.CurrentTurn)
+	}
+	v1 := ppIntFrom(gs.GameData["state_version"])
+	if v1 != 1 {
+		t.Fatalf("expected state_version=1 after the first real shot, got %d", v1)
+	}
+
+	// The "2nd chance" shot — same player, same turn, a second real shot.
+	secondShot := baseShotMove()
+	secondShot["pocketed"] = []interface{}{float64(1)}
+	secondShot["first_contact"] = float64(1)
+	if _, _, err := gm.processPoolMove(gs, p0, "shot", secondShot); err != nil {
+		t.Fatalf("second (2nd-chance) shot: %v", err)
+	}
+	v2 := ppIntFrom(gs.GameData["state_version"])
+	if v2 != 2 {
+		t.Fatalf("expected state_version=2 after the 2nd-chance shot, got %d (this is exactly the scenario the reported bug was about — the backend must keep producing a fresh version here even though CurrentTurn never changed)", v2)
+	}
+}
+
+func TestPoolStateVersionUnaffectedByVolatileMoves(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{}
+	p0 := gs.Players[0].UserID
+
+	// Establish a real baseline via one genuine shot first.
+	if _, _, err := gm.processPoolMove(gs, p0, "shot", baseShotMove()); err != nil {
+		t.Fatalf("baseline shot: %v", err)
+	}
+	baseline := ppIntFrom(gs.GameData["state_version"])
+
+	if _, _, err := gm.processPoolMove(gs, p0, "shot_progress", map[string]interface{}{
+		"live_ball_positions": map[string]interface{}{"0": map[string]interface{}{"x": 0.5, "y": 0.5, "vx": 0.1, "vy": 0.1}},
+	}); err != nil {
+		t.Fatalf("shot_progress: %v", err)
+	}
+	if _, _, err := gm.processPoolMove(gs, p0, "game_event", map[string]interface{}{"payload": "opaque-aim-json"}); err != nil {
+		t.Fatalf("game_event: %v", err)
+	}
+	if _, _, err := gm.processPoolMove(gs, p0, "view_ack", map[string]interface{}{"state_version": float64(baseline)}); err != nil {
+		t.Fatalf("view_ack: %v", err)
+	}
+
+	if got := ppIntFrom(gs.GameData["state_version"]); got != baseline {
+		t.Fatalf("expected state_version to stay at %d after only volatile/ack moves, got %d", baseline, got)
+	}
+}
+
+func TestPoolViewAckRecordsPlayerVersion(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{}
+	p0, p1 := gs.Players[0].UserID, gs.Players[1].UserID
+
+	if _, _, err := gm.processPoolMove(gs, p0, "shot", baseShotMove()); err != nil {
+		t.Fatalf("shot: %v", err)
+	}
+
+	gameOver, winnerID, err := gm.processPoolMove(gs, p0, "view_ack", map[string]interface{}{"state_version": float64(1)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gameOver || winnerID != nil {
+		t.Fatal("view_ack must never end the game or declare a winner")
+	}
+	acks, _ := gs.GameData["view_acks"].(map[string]interface{})
+	if ppIntFrom(acks[fmt.Sprintf("%d", p0)]) != 1 {
+		t.Fatalf("expected p0's ack to record version 1, got %v", acks[fmt.Sprintf("%d", p0)])
+	}
+	if _, exists := acks[fmt.Sprintf("%d", p1)]; exists {
+		t.Fatalf("p0's ack should never write p1's own entry — p1 hasn't acked anything yet")
+	}
+}
+
+// TestPoolViewAckIgnoresStaleRollback confirms an out-of-order ack (a lower
+// version arriving after a higher one already landed — plausible if two
+// acks race on the wire) never regresses a player's recorded version
+// backwards, which would make them look artificially "behind" again to
+// anyone reading view_acks for the confirmation UI.
+func TestPoolViewAckIgnoresStaleRollback(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{}
+	p0 := gs.Players[0].UserID
+
+	if _, _, err := gm.processPoolMove(gs, p0, "view_ack", map[string]interface{}{"state_version": float64(5)}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, _, err := gm.processPoolMove(gs, p0, "view_ack", map[string]interface{}{"state_version": float64(3)}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	acks, _ := gs.GameData["view_acks"].(map[string]interface{})
+	if ppIntFrom(acks[fmt.Sprintf("%d", p0)]) != 5 {
+		t.Fatalf("expected the stale, lower ack (3) to be ignored, keeping version 5, got %v", acks[fmt.Sprintf("%d", p0)])
+	}
+}
+
+func TestPoolViewAckRejectsMissingVersion(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{}
+	_, _, err := gm.processPoolMove(gs, gs.Players[0].UserID, "view_ack", map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected an error for a view_ack with no state_version")
+	}
+}
+
+// TestPoolViewAckNeverGatesOrTouchesGameplay confirms the whole mechanism
+// is purely informational: sending (or never sending) a view_ack has zero
+// effect on turn order, fouls, or any other real gameplay state — matching
+// the explicit design intent (a confirmation/diagnostic signal, never a
+// gate on whether a shot is allowed).
+func TestPoolViewAckNeverGatesOrTouchesGameplay(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{}
+	p0 := gs.Players[0].UserID
+
+	turnBefore := gs.CurrentTurn
+	if _, _, err := gm.processPoolMove(gs, p0, "view_ack", map[string]interface{}{"state_version": float64(0)}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gs.CurrentTurn != turnBefore {
+		t.Fatalf("view_ack must never advance the turn, got %d (was %d)", gs.CurrentTurn, turnBefore)
+	}
+
+	// A real shot must still work completely normally afterward.
+	shot := baseShotMove()
+	shot["pocketed"] = []interface{}{float64(3)}
+	shot["first_contact"] = float64(3)
+	if _, _, err := gm.processPoolMove(gs, p0, "shot", shot); err != nil {
+		t.Fatalf("shot after a view_ack: %v", err)
+	}
+	if gs.CurrentTurn != 0 {
+		t.Fatalf("expected the legal pocket to correctly keep p0's turn, got %d", gs.CurrentTurn)
+	}
+}
+
+// --- Cue-stick relay shooter tagging ---
+//
+// Regression coverage for a real, confirmed member report: even on the very
+// first turn (no "2nd chance" needed to reproduce it), a spectating player
+// never saw the current shooter's cue-stick at all — only the balls. Since
+// the actual 3D stick rendering happens entirely inside a third-party,
+// externally-hosted engine this backend can't inspect or control, the fix
+// tags every game_event with the sender's own player ID so the frontend can
+// positively identify whose aim is being relayed and show its own,
+// WeWatch-owned "X is aiming" indicator regardless of whether the embedded
+// engine's own rendering succeeds. These tests only cover this backend's
+// half of that fix — that the tag is always correct and never leaks the
+// wrong sender — not the frontend indicator itself.
+
+func TestPoolGameEventTagsSenderID(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{}
+	p0 := gs.Players[0].UserID
+
+	if _, _, err := gm.processPoolMove(gs, p0, "game_event", map[string]interface{}{"payload": "opaque-aim-blob"}); err != nil {
+		t.Fatalf("game_event: %v", err)
+	}
+
+	wrapped, ok := gs.GameData["aim_event"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected aim_event to be a tagged {shooter_id, payload} map, got %T: %v", gs.GameData["aim_event"], gs.GameData["aim_event"])
+	}
+	if got := ppIntFrom(wrapped["shooter_id"]); uint(got) != p0 {
+		t.Fatalf("expected shooter_id=%d (the actual sender), got %d", p0, got)
+	}
+	if wrapped["payload"] != "opaque-aim-blob" {
+		t.Fatalf("expected the inner payload to be passed through unchanged, got %v", wrapped["payload"])
+	}
+}
+
+// The tag must reflect whoever actually called processPoolMove, not a
+// hardcoded/assumed player index — confirmed by calling it as p1 instead of
+// p0. (This test exercises processPoolMove directly, same as every other
+// test in this file, bypassing ProcessMove's own outer turn-gate — real
+// out-of-turn rejection for game_event is unchanged by this fix and is
+// exercised by the live end-to-end test, not a unit test here.)
+func TestPoolGameEventTagReflectsWhicheverPlayerActuallySent(t *testing.T) {
+	gs := makeTestPoolState(2)
+	gm := &GameManager{}
+	p1 := gs.Players[1].UserID
+
+	if _, _, err := gm.processPoolMove(gs, p1, "game_event", map[string]interface{}{"payload": "p1s-aim"}); err != nil {
+		t.Fatalf("game_event: %v", err)
+	}
+
+	wrapped, ok := gs.GameData["aim_event"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected aim_event to be a tagged map, got %T", gs.GameData["aim_event"])
+	}
+	if got := ppIntFrom(wrapped["shooter_id"]); uint(got) != p1 {
+		t.Fatalf("expected shooter_id=%d (p1, the actual caller), got %d — the tag must reflect who genuinely sent it, never a hardcoded/assumed player", p1, got)
+	}
 }
