@@ -271,7 +271,7 @@ function drawPickupIcon(ctx, type, cx, cy, r) {
 const isTouchDevice =
   typeof window !== 'undefined' && 'ontouchstart' in window && navigator.maxTouchPoints > 0;
 
-export default function PingPongGame({ gameState, players, currentUserId, onMove, onClose, onPostResult }) {
+export default function PingPongGame({ gameState, players, currentUserId, onMove, onClose, onPostResult, onPlayAgain }) {
   const gs = gameState?.game_state || {};
   const p1Id = String(gs.p1_id || '');
   const p2Id = String(gs.p2_id || '');
@@ -300,6 +300,32 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
     pingPongSoundEnabled = soundEnabled;
     try { localStorage.setItem('ping_pong_sound_enabled', String(soundEnabled)); } catch { /* ignore */ }
   }, [soundEnabled]);
+
+  // Connection-staleness indicator — P2/spectator side only. P1 (the
+  // physics authority) generates state_sync locally every ~100ms during
+  // 'playing' regardless of whether it's actually reaching anyone, so a
+  // healthy P2/spectator connection should see gameState update on roughly
+  // that same cadence; a gap much longer than that while still nominally
+  // 'playing' is a reliable sign something's actually wrong on the wire —
+  // not just a quiet moment, since nothing here is naturally quiet during a
+  // live rally. P1 doesn't get an equally reliable version of this signal
+  // (whether P1's OWN outgoing broadcasts are echoed back to itself isn't
+  // guaranteed, so "time since I last received a game_state_update" could
+  // produce false positives for P1 during perfectly healthy play with no
+  // discrete events happening) — deliberately not shown for P1 to avoid
+  // that risk. Checked on a plain interval, not the 60fps RAF loop, since
+  // this only needs to drive a rare, cheap boolean-state UI change.
+  const [connectionStale, setConnectionStale] = useState(false);
+  useEffect(() => {
+    if (isP1) return undefined;
+    const STALE_AFTER_MS = 1500;
+    const check = () => {
+      const stale = phase === 'playing' && Date.now() - S.current.lastGameStateAt > STALE_AFTER_MS;
+      setConnectionStale(stale);
+    };
+    const id = setInterval(check, 400);
+    return () => clearInterval(id);
+  }, [isP1, phase]);
 
   // All mutable game state in a single object ref — never triggers re-renders.
   // balls is always an array (even with exactly one ball in play today) so a
@@ -346,6 +372,10 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
     justServedLocally: false, // set in handleServeTap, consumed once in the sync effect so the actual server never hears their own serve sound twice
     knownPickupIds: new Set(),
     knownEffectExpiresAt: null,
+    // Last time gameState actually changed — used for the connection-
+    // staleness indicator below (P2/spectator side only; see its own
+    // comment for why P1 doesn't have an equally reliable version of this).
+    lastGameStateAt: Date.now(),
     // Read-only copies of ids — kept here so RAF callbacks don't close over stale prop values
     p1Id, p2Id, myId, isP1, isP2,
   });
@@ -356,6 +386,7 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
     gsRef.current = gameState?.game_state || {};
     const gsCurrent = gsRef.current;
     const s = S.current;
+    s.lastGameStateAt = Date.now();
     const prevPhase = s.lastKnownPhase;
     s.lastKnownPhase = gsCurrent.phase;
     const justEnteredPlaying = prevPhase !== 'playing' && gsCurrent.phase === 'playing';
@@ -964,6 +995,17 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
         </div>
       )}
 
+      {/* Connection-unstable notice — see the connectionStale effect's own
+          comment for why this is P2/spectator-only. A thin bar rather than a
+          blocking overlay: the game itself keeps rendering (frozen at its
+          last known position via the extrapolation cap) underneath, this
+          just tells the player WHY, instead of an unexplained freeze. */}
+      {connectionStale && (
+        <div className="text-center text-xs font-semibold py-1 shrink-0 bg-amber-900/70 text-amber-200 animate-pulse">
+          ⚠️ Connection unstable — reconnecting…
+        </div>
+      )}
+
       {/* Canvas — fills remaining space with aspect ratio preserved */}
       <div className="flex-1 min-h-0 relative flex items-center justify-center overflow-hidden px-2 py-1">
         <canvas
@@ -1056,6 +1098,7 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
           gameStats={gameStats}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
 

@@ -36,7 +36,7 @@ function Card({ card, faceDown, onClick, dimmed }) {
   );
 }
 
-export default function CrazyEightsGame({ gameState, players = [], currentUserId, myHand, onMove, onClose, onEndGame, onPostResult }) {
+export default function CrazyEightsGame({ gameState, players = [], currentUserId, myHand, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const [pendingEight, setPendingEight] = useState(null);
 
   const gs = gameState?.game_state || {};
@@ -100,6 +100,11 @@ export default function CrazyEightsGame({ gameState, players = [], currentUserId
           </div>
           <div className="flex items-center gap-2">
             <GameRulesButton gameType="crazy_eights" />
+            {!isOver && (
+              <button onClick={handleForfeit} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
+                Forfeit
+              </button>
+            )}
             <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'Forfeit'}>
               <X className="w-6 h-6" />
             </button>
@@ -164,14 +169,6 @@ export default function CrazyEightsGame({ gameState, players = [], currentUserId
           </div>
         )}
 
-        {!isOver && (
-          <div className="flex justify-end px-5 pb-5">
-            <button onClick={handleForfeit} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
-              Forfeit
-            </button>
-          </div>
-        )}
-
         {pendingEight && (
           <div className="absolute inset-0 bg-black/80 flex items-center justify-center rounded-2xl">
             <div className="bg-gray-800 rounded-xl p-5 flex flex-col items-center gap-3">
@@ -208,6 +205,7 @@ export default function CrazyEightsGame({ gameState, players = [], currentUserId
         isForfeit={gameState?.status === 'forfeited'}
         onClose={onClose}
         onPostResult={onPostResult}
+        secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
       />
     )}
     </>

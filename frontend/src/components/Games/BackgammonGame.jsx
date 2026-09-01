@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
@@ -36,17 +36,93 @@ function Checker({ owner, small }) {
   );
 }
 
-function Die({ value, active }) {
+// ── 3-D Dice — ported from LudoGame.jsx's Dice3D verbatim (same technique:
+// a real CSS 3D-transform cube built from 6 absolutely-positioned faces,
+// rotated to reveal the correct face whenever `value` changes). Reused
+// as-is rather than re-derived, since the actual roll ANIMATION is purely
+// reactive to the `value` prop — and that value already comes straight from
+// gs.dice (the server-broadcast game state every connected player already
+// receives identically), so every player sees the exact same roll play out
+// at the same time with zero extra wiring needed. Backgammon has no
+// per-die click-to-select interaction (a die's own row/onClick prop was
+// never wired here either, before or after this port — move selection
+// happens by clicking a board point instead), so `selected`/`onClick` are
+// simply left unused/undefined at the call site.
+const PIPS = {
+  1: [[50,50]],
+  2: [[28,28],[72,72]],
+  3: [[28,28],[50,50],[72,72]],
+  4: [[28,28],[72,28],[28,72],[72,72]],
+  5: [[28,28],[72,28],[50,50],[28,72],[72,72]],
+  6: [[28,22],[72,22],[28,50],[72,50],[28,78],[72,78]],
+};
+// [rotX, rotY] to bring face N to face the viewer
+const FACE_SHOW = { 1:[0,0], 2:[0,-90], 3:[-90,0], 4:[90,0], 5:[0,90], 6:[0,180] };
+
+function DieFace({ n, pipColor }) {
   return (
     <div style={{
-      width: 32, height: 32, borderRadius: 6,
-      background: active ? 'linear-gradient(135deg,#fef08a,#eab308)' : '#4b5563',
-      opacity: active ? 1 : 0.4,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontWeight: 900, fontSize: 16, color: active ? '#3f2d00' : '#9ca3af',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.5)',
+      position:'absolute', inset:0,
+      background:'linear-gradient(135deg,#f8fafc 0%,#e2e8f0 100%)',
+      borderRadius:6,
+      border:'1.5px solid #94a3b8',
+      boxShadow:'inset 0 1px 3px rgba(255,255,255,0.9),inset 0 -1px 2px rgba(0,0,0,0.15)',
     }}>
-      {value}
+      {(PIPS[n]||[]).map(([px,py],i) => (
+        <div key={i} style={{
+          position:'absolute', left:`${px}%`, top:`${py}%`,
+          transform:'translate(-50%,-50%)',
+          width:7, height:7, borderRadius:'50%',
+          backgroundColor: pipColor || '#1e293b',
+          boxShadow:'0 1px 2px rgba(0,0,0,0.6)',
+        }}/>
+      ))}
+    </div>
+  );
+}
+
+function Dice3D({ value, pipColor, consumed }) {
+  const S = 32; // matches the old flat Die's own 32px footprint
+  const H = S / 2;
+  const rotRef  = useRef({ x: 0, y: 0 });
+  const prevVal = useRef(0);
+  const [tf, setTf] = useState('rotateX(-20deg) rotateY(20deg)');
+  const [tr, setTr] = useState('none');
+
+  useEffect(() => {
+    if (!value || value === prevVal.current) return;
+    prevVal.current = value;
+    const [fx, fy] = FACE_SHOW[value];
+    const bx = Math.round(rotRef.current.x / 360) * 360;
+    const by = Math.round(rotRef.current.y / 360) * 360;
+    const nx = bx + (Math.floor(Math.random()*2)+2)*360 + fx;
+    const ny = by + (Math.floor(Math.random()*2)+2)*360 + fy;
+    rotRef.current = { x: nx, y: ny };
+    setTr('transform 0.75s cubic-bezier(0.22,1.5,0.5,1)');
+    setTf(`rotateX(${nx}deg) rotateY(${ny}deg)`);
+  }, [value]);
+
+  const face = (transform, n) => (
+    <div style={{ position:'absolute', width:S, height:S, transform }}>
+      <DieFace n={n} pipColor={consumed ? '#94a3b8' : pipColor} />
+    </div>
+  );
+
+  return (
+    <div style={{
+      width:S, height:S, perspective:160, perspectiveOrigin:'50% 40%',
+      opacity: consumed ? 0.4 : 1,
+      borderRadius: 8,
+      transition: 'opacity 0.2s',
+    }}>
+      <div style={{ width:S, height:S, position:'relative', transformStyle:'preserve-3d', transform:tf, transition:tr }}>
+        {face(`translateZ(${H}px)`, 1)}
+        {face(`rotateY(180deg) translateZ(${H}px)`, 6)}
+        {face(`rotateY(90deg) translateZ(${H}px)`, 2)}
+        {face(`rotateY(-90deg) translateZ(${H}px)`, 5)}
+        {face(`rotateX(-90deg) translateZ(${H}px)`, 4)}
+        {face(`rotateX(90deg) translateZ(${H}px)`, 3)}
+      </div>
     </div>
   );
 }
@@ -91,7 +167,7 @@ function Point({ point, board, isTop, selected, isTarget, onClick }) {
   );
 }
 
-export default function BackgammonGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function BackgammonGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const gs = gameState?.game_state || {};
   const board = gs.board || [];
   const bar = gs.bar || {};
@@ -191,6 +267,7 @@ export default function BackgammonGame({ gameState, players, currentUserId, onMo
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
 
@@ -259,7 +336,7 @@ export default function BackgammonGame({ gameState, players, currentUserId, onMo
             {/* Middle bar strip */}
             <div style={{ height: '12%' }} className="flex items-center justify-center">
               <div className="flex items-center gap-3">
-                {dice.map((d, i) => <Die key={i} value={d} active={i >= usedDiceCount} />)}
+                {dice.map((d, i) => <Dice3D key={i} value={d} pipColor="#3f2d00" consumed={i < usedDiceCount} />)}
               </div>
             </div>
 

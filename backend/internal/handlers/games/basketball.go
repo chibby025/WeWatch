@@ -136,21 +136,33 @@ func basketballNextActiveIndexFrom(gameState *GameSessionState, fromIdx int) int
 func (gm *GameManager) processBasketballMove(gameState *GameSessionState, playerID uint, moveType string, moveData map[string]interface{}) (gameOver bool, winnerID *uint, err error) {
 	ensureBasketballState(gameState)
 
-	// shoot_progress: a live, ~10Hz relay of the shooter's own ball position
-	// while it's airborne (Ball.state === 'shot' on the sending client — see
-	// BasketballGame.jsx), so spectators see the actual shot arc in
-	// near-real-time instead of just a static "X is shooting…" placeholder
-	// until the result lands. Mirrors bowling.go's own throw_progress relay
-	// exactly: no authority over make/miss at all (that's still decided
-	// purely by the final "shoot" move below), never persisted to the DB
-	// (volatileRT in game_manager.go), and turn-gate-exempt so a straggling
-	// packet arriving just after the turn has already passed isn't rejected.
+	// shoot_progress: a live relay of the shooter's own ball AND player
+	// position — sent continuously (~10Hz) for the whole duration of the
+	// shooter's turn (not just while airborne), so every other connected
+	// device can render a real, live 3D mirror of the actual action (see
+	// BasketballGame.jsx's spectator render path) instead of a static "X is
+	// shooting…" placeholder. `ball` is present whenever a shot is in
+	// flight; `player` is present on every tick, airborne or not, so a
+	// spectator sees the shooter move/dribble around the court too, not just
+	// the ball during its flight. No authority over make/miss at all (that's
+	// still decided purely by the final "shoot" move below), never
+	// persisted to the DB (volatileRT in game_manager.go), and turn-gate-
+	// exempt so a straggling packet arriving just after the turn has already
+	// passed isn't rejected.
 	if moveType == "shoot_progress" {
-		ball, ok := moveData["ball"].(map[string]interface{})
-		if !ok {
-			return false, nil, fmt.Errorf("missing ball")
+		ball, _ := moveData["ball"].(map[string]interface{})
+		player, _ := moveData["player"].(map[string]interface{})
+		if ball == nil && player == nil {
+			return false, nil, fmt.Errorf("missing ball/player")
 		}
-		gameState.GameData["shoot_progress"] = map[string]interface{}{"ball": ball}
+		progress := map[string]interface{}{}
+		if ball != nil {
+			progress["ball"] = ball
+		}
+		if player != nil {
+			progress["player"] = player
+		}
+		gameState.GameData["shoot_progress"] = progress
 		return false, nil, nil
 	}
 

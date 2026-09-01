@@ -102,7 +102,7 @@ function ColorPicker({ onPick }) {
   );
 }
 
-export default function UnoGame({ gameState, players, currentUserId, myHand, onMove, onClose, onEndGame, onPostResult }) {
+export default function UnoGame({ gameState, players, currentUserId, myHand, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const [gs, setGs]           = useState(null);
   const [selected, setSelected] = useState(null);
   const [pickingColor, setPickingColor] = useState(false);
@@ -410,6 +410,7 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
         isForfeit={gameState?.status === 'forfeited'}
         onClose={onClose}
         onPostResult={onPostResult}
+        secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
       />
     )}
     </>

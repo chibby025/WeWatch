@@ -62,7 +62,7 @@ function PlayerBar({ player, isCurrentUser, colorLabel, isTheirTurn, isGameOver 
   );
 }
 
-export default function ChessGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function ChessGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const [game, setGame] = useState(() => new Chess());
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [legalMoves, setLegalMoves] = useState([]);
@@ -181,6 +181,24 @@ export default function ChessGame({ gameState, players, currentUserId, onMove, o
     >
       <div className="flex flex-col items-center gap-2 w-full max-w-[min(80vw,420px)]">
 
+        {/* Header — this game never had one before; its only exit control
+            ("Forfeit") lived in a bottom control row instead. Moved up here
+            to match every other game's header-based end/forfeit placement. */}
+        <div className="w-full flex items-center justify-between">
+          <span className="text-white font-bold text-lg">♟️ Chess</span>
+          <div className="flex items-center gap-2">
+            <GameRulesButton gameType="chess" />
+            {!isGameOver && (
+              <button
+                onClick={onEndGame || onClose}
+                className="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-lg text-sm font-semibold transition-colors"
+              >
+                Forfeit
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Status pill */}
         <div className={`px-5 py-1.5 rounded-full text-sm font-semibold transition-colors
           ${isGameOver
@@ -262,17 +280,6 @@ export default function ChessGame({ gameState, players, currentUserId, onMove, o
           isGameOver={isGameOver}
         />
 
-        <div className="flex items-center gap-2">
-          <GameRulesButton gameType="chess" />
-          {!isGameOver && (
-            <button
-              onClick={onEndGame || onClose}
-              className="px-5 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-lg text-sm transition-colors"
-            >
-              Forfeit
-            </button>
-          )}
-        </div>
       </div>
     </div>
 
@@ -288,6 +295,7 @@ export default function ChessGame({ gameState, players, currentUserId, onMove, o
         isForfeit={serverStatus === 'forfeited'}
         onClose={onClose}
         onPostResult={onPostResult}
+        secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
       />
     )}
   </>

@@ -2736,6 +2736,13 @@ export default function VideoWatch() {
     });
 
     setIsGameLobbyOpen(false);
+    // Close immediately on the host's own click rather than waiting on the
+    // game_started broadcast to round-trip back (the only other place this
+    // was previously closed, further down in the WS message handler) — that
+    // path exists for OTHER room members whose sidebar happens to be open
+    // when someone else starts a game, but for the host who just clicked
+    // Start, closing it here is instant and never depends on network timing.
+    setIsLeftSidebarOpen(false);
   }, [sendMessage]);
 
   const handleGameMove = useCallback((moveData) => {
@@ -2788,6 +2795,7 @@ export default function VideoWatch() {
     if (!sendMessage) return;
     sendMessage({ type: 'create_tournament', data: { game_type: gameType, players: playersData } });
     setIsGameLobbyOpen(false);
+    setIsLeftSidebarOpen(false);
     setShowTournamentBracket(true);
   }, [sendMessage]);
 
@@ -2798,6 +2806,7 @@ export default function VideoWatch() {
     if (!sendMessage) return;
     sendMessage({ type: 'create_hot_seat_tournament', data: { game_type: gameType, players: playersData, mode } });
     setIsGameLobbyOpen(false);
+    setIsLeftSidebarOpen(false);
   }, [sendMessage]);
 
   // Hot-seat tournament: submit this player's score after their Fowl Play session ends.
@@ -2986,6 +2995,11 @@ export default function VideoWatch() {
           avatar_url: p.avatar || p.avatar_url || null,
           color:      p.color,
         })),
+        // Tells the backend to echo is_replay back in its game_started
+        // broadcast, so every connected client (not just whoever clicked
+        // Play Again) knows to skip the "here's what you're about to play"
+        // intro popup for this rematch — see GameOverlay.jsx's wrapper.
+        is_replay: true,
       }
     });
   }, [activeGame, sendMessage]);
@@ -6422,6 +6436,11 @@ export default function VideoWatch() {
                 current_turn:    message.data.current_turn ?? 0,
                 players:         enrichedPlayers,
                 game_state:      message.data.game_state,
+                // Set by handlePlayAgain's start_game call, echoed back by the
+                // backend — lets GameOverlay's wrapper skip the intro popup
+                // for a rematch. Absent (undefined/false) for every genuinely
+                // fresh game start, including the very first game of a match.
+                is_replay:       !!message.data.is_replay,
               };
             });
             // A rehydration is a silent resync, not a user-facing "new game"

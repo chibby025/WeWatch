@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { X as CloseIcon, Volume2, VolumeX, Flag } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
+import ControlsTutorialOverlay from './ControlsTutorialOverlay';
 
 // 8-ball pool — embeds a forked, GPL-3.0 real-physics 3D engine
 // (tailuge/billiards) in a sandboxed iframe, same pattern already
@@ -117,7 +118,7 @@ function PoolBallIcon({ id }) {
   );
 }
 
-export default function PoolGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function PoolGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const iframeRef = useRef(null);
   const [iframeReady, setIframeReady] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(() => {
@@ -438,6 +439,15 @@ export default function PoolGame({ gameState, players, currentUserId, onMove, on
 
   return (
     <>
+    {!isOver && (
+      <ControlsTutorialOverlay
+        gameType="pool"
+        steps={[
+          { icon: 'drag', text: 'Drag anywhere on the table (or use the arrow keys) to aim the cue.' },
+          { icon: 'swipe-up', text: 'Swipe up or down — at the top or bottom of the screen — to set your shot power, then tap again (or press Space) to shoot.' },
+        ]}
+      />
+    )}
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-950 text-white">
       {/* Header — two rows: title/controls on top, player/turn status below.
           Keeping both on one row got jampacked once real usernames + type
@@ -579,6 +589,7 @@ export default function PoolGame({ gameState, players, currentUserId, onMove, on
         isForfeit={status === 'forfeited'}
         onClose={onClose}
         onPostResult={onPostResult}
+        secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
       />
     )}
     </>

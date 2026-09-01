@@ -14,8 +14,8 @@ import DominoesGame from './DominoesGame';
 import DartsGame from './DartsGame';
 import BowlingGame from './BowlingGame';
 const BasketballGame = lazy(() => import('./BasketballGame'));
-import ArcheryGame from './ArcheryGame';
-import CurlingGame from './CurlingGame';
+// import ArcheryGame from './ArcheryGame'; // temporarily removed
+// import CurlingGame from './CurlingGame'; // temporarily removed
 import LudoGame from './LudoGame';
 import ConnectFourGame from './ConnectFourGame';
 import WouldYouRatherGame from './WouldYouRatherGame';
@@ -47,10 +47,11 @@ const FowlPlayGame = lazy(() => import('./FowlPlayGame'));
 const SpaceAttackGame = lazy(() => import('./SpaceAttackGame'));
 const ToadBallGame = lazy(() => import('./ToadBallGame'));
 const RhythmHeroGame = lazy(() => import('./RhythmHeroGame'));
-const GolfGame = lazy(() => import('./GolfGame'));
+// const GolfGame = lazy(() => import('./GolfGame')); // removed 2026-08, see the commented-out case below
 const SliceFrenzyGame = lazy(() => import('./SliceFrenzyGame'));
-const SkeeballGame = lazy(() => import('./SkeeballGame'));
+// const SkeeballGame = lazy(() => import('./SkeeballGame')); // temporarily removed
 const ObbyParkourGame = lazy(() => import('./ObbyParkourGame'));
+const TeeworldsGame = lazy(() => import('./TeeworldsGame'));
 // const MicroRacingGame = lazy(() => import('./MicroRacingGame')); // temporarily removed
 // const RampRushGame = lazy(() => import('./RampRushGame')); // temporarily removed
 // const RouletteGame = lazy(() => import('./RouletteGame')); // temporarily removed
@@ -63,9 +64,9 @@ import SudokuGame from './SudokuGame';
 import PingPongGame from './PingPongGame';
 import TankBattleGame from './TankBattleGame';
 import BombermanGame from './BombermanGame';
-const FootballGame = lazy(() => import('./FootballGame'));
-import BlobBattleGame from './BlobBattleGame';
-import HideSeekGame from './HideSeekGame';
+// const FootballGame = lazy(() => import('./FootballGame')); // temporarily removed
+// import BlobBattleGame from './BlobBattleGame'; // temporarily removed
+// import HideSeekGame from './HideSeekGame'; // removed 2026-08, see the commented-out case below
 import AirHockeyGame from './AirHockeyGame';
 
 // The brief poster+instructions intro (GameStartInfoModal) needs to show
@@ -79,6 +80,13 @@ import AirHockeyGame from './AirHockeyGame';
 export default function GameOverlay(props) {
   const { activeGame } = props;
   const [showIntro, setShowIntro] = useState(false);
+  // Tracks the game_session_id whose intro has been fully resolved — either
+  // shown-and-dismissed, or skipped outright because this session started
+  // via "Play Again" (activeGame.is_replay). Games with their own intro-
+  // gated countdown (Rock Paper Scissors, Bomberman) read introResolved
+  // below to know when it's safe to actually start ticking, rather than
+  // racing the countdown against the popup that's still covering it.
+  const [introResolvedSessionId, setIntroResolvedSessionId] = useState(null);
   const shownForSessionRef = useRef(null);
 
   useEffect(() => {
@@ -86,22 +94,37 @@ export default function GameOverlay(props) {
     if (sessionId == null) return;
     if (shownForSessionRef.current === sessionId) return;
     shownForSessionRef.current = sessionId;
-    setShowIntro(true);
-  }, [activeGame?.game_session_id]);
+    if (activeGame.is_replay) {
+      // A rematch of a game every connected client already saw the rules
+      // for a moment ago — skip the popup entirely and resolve immediately.
+      setShowIntro(false);
+      setIntroResolvedSessionId(sessionId);
+    } else {
+      setShowIntro(true);
+    }
+  }, [activeGame?.game_session_id, activeGame?.is_replay]);
 
   if (!activeGame) return null;
 
+  const introResolved = introResolvedSessionId === activeGame.game_session_id;
+
   return (
     <>
-      <GameOverlayInner {...props} />
+      <GameOverlayInner {...props} introResolved={introResolved} />
       {showIntro && (
-        <GameStartInfoModal gameType={activeGame.game_type} onDismiss={() => setShowIntro(false)} />
+        <GameStartInfoModal
+          gameType={activeGame.game_type}
+          onDismiss={() => {
+            setShowIntro(false);
+            setIntroResolvedSessionId(activeGame.game_session_id);
+          }}
+        />
       )}
     </>
   );
 }
 
-function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove, onClose, onEndGame, onPlayAgain, onPostResult, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore, gameErrorMsg, gameErrorKey, onRhythmHeroBroadcast, rhythmHeroLiveInfo, rhythmHeroSelectingInfo, rhythmHeroScoreInfo, rhythmHeroLeaderboard, registerRhythmHeroInputReceiver, registerRhythmHeroCheerReceiver, currentUsername }) {
+function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove, onClose, onEndGame, onPlayAgain, onPostResult, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore, gameErrorMsg, gameErrorKey, onRhythmHeroBroadcast, rhythmHeroLiveInfo, rhythmHeroSelectingInfo, rhythmHeroScoreInfo, rhythmHeroLeaderboard, registerRhythmHeroInputReceiver, registerRhythmHeroCheerReceiver, currentUsername, introResolved }) {
   if (!activeGame) return null;
 
   const handleMove = (moveData) => {
@@ -121,6 +144,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -137,6 +161,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onEndGame={onEndGame}
           onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
+          introResolved={introResolved}
         />
       );
 
@@ -149,6 +174,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -161,6 +187,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
         />
       );
 
@@ -199,6 +226,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -212,6 +240,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -226,6 +255,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -240,6 +270,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -253,6 +284,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -266,6 +298,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -292,36 +325,39 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
             onMove={handleMove}
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
             onPostResult={onPostResult}
           />
         </Suspense>
       );
 
-    case 'archery':
-      return (
-        <ArcheryGame
-          gameState={activeGame}
-          players={activeGame.players}
-          currentUserId={currentUserId}
-          onMove={handleMove}
-          onClose={onClose}
-          onEndGame={onEndGame}
-          onPostResult={onPostResult}
-        />
-      );
+    // case 'archery': temporarily removed
+    //   return (
+    //     <ArcheryGame
+    //       gameState={activeGame}
+    //       players={activeGame.players}
+    //       currentUserId={currentUserId}
+    //       onMove={handleMove}
+    //       onClose={onClose}
+    //       onEndGame={onEndGame}
+    //       onPlayAgain={onPlayAgain}
+    //       onPostResult={onPostResult}
+    //     />
+    //   );
 
-    case 'curling':
-      return (
-        <CurlingGame
-          gameState={activeGame}
-          players={activeGame.players}
-          currentUserId={currentUserId}
-          onMove={handleMove}
-          onClose={onClose}
-          onEndGame={onEndGame}
-          onPostResult={onPostResult}
-        />
-      );
+    // case 'curling': // temporarily removed
+    //   return (
+    //     <CurlingGame
+    //       gameState={activeGame}
+    //       players={activeGame.players}
+    //       currentUserId={currentUserId}
+    //       onMove={handleMove}
+    //       onClose={onClose}
+    //       onEndGame={onEndGame}
+    //       onPlayAgain={onPlayAgain}
+    //       onPostResult={onPostResult}
+    //     />
+    //   );
 
     case 'ludo':
       return (
@@ -332,6 +368,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
         />
       );
 
@@ -344,6 +381,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
         />
       );
 
@@ -356,6 +394,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -369,6 +408,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -383,6 +423,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -396,6 +437,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
         />
       );
 
@@ -408,6 +450,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -421,6 +464,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
         />
       );
 
@@ -437,6 +481,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onRelayPacket={onRelayPacket}
           registerRelayReceiver={registerRelayReceiver}
         />
@@ -453,6 +498,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           <DoomGame
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
             isHost={activeGame.host_id === currentUserId}
             onRelayPacket={onRelayPacket}
             registerRelayReceiver={registerRelayReceiver}
@@ -472,6 +518,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
             roomId={roomId}
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
             isHost={activeGame.host_id === currentUserId}
           />
         </Suspense>
@@ -489,6 +536,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
             roomId={roomId}
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
             isHost={activeGame.host_id === currentUserId}
           />
         </Suspense>
@@ -508,6 +556,27 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
             roomId={roomId}
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
+            isHost={activeGame.host_id === currentUserId}
+          />
+        </Suspense>
+      );
+
+    case 'teeworlds':
+      // Genuine N-player multiplayer, same shape as obby_parkour/quake3/
+      // micro_racing above — every room member's iframe connects directly
+      // to the WASM Teeworlds client's own supervisor-fronted Railway
+      // service (its own real per-room dedicated server + netcode via
+      // Emscripten's transparent UDP-over-WebSocket socket emulation, no
+      // relay through this app's backend). isHost only gates the extra
+      // "End for Everyone" control.
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <TeeworldsGame
+            roomId={roomId}
+            onClose={onClose}
+            onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
             isHost={activeGame.host_id === currentUserId}
           />
         </Suspense>
@@ -525,6 +594,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
             onMove={handleMove}
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
           />
         </Suspense>
       );
@@ -550,6 +620,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -564,6 +635,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
             gameState={activeGame}
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
             isHost={activeGame.host_id === currentUserId}
             hotSeatTournament={hotSeatTournament}
             currentUserId={currentUserId}
@@ -584,6 +656,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
         />
       );
 
@@ -610,6 +683,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
         />
       );
 
@@ -622,6 +696,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -635,6 +710,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
         />
       );
 
@@ -659,6 +735,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -672,6 +749,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -689,6 +767,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -706,61 +785,69 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
+          introResolved={introResolved}
         />
       );
 
-    case 'football':
-      // Single-player 3D arcade match (host vs AI, forked from
-      // world-cup-arena) — host-only-ever, same shape as DOOM/Golf. No
-      // server-side move logic at all, so no onMove/onPostResult wiring.
-      return (
-        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
-          <FootballGame
-            onClose={onClose}
-            onEndGame={onEndGame}
-            isHost={activeGame.host_id === currentUserId}
-            hostUsername={activeGame.players?.find((p) => p.user_id === activeGame.host_id)?.username}
-          />
-        </Suspense>
-      );
+    // case 'football': temporarily removed
+    //   // Single-player 3D arcade match (host vs AI, forked from
+    //   // world-cup-arena) — host-only-ever, same shape as DOOM/Golf. No
+    //   // server-side move logic at all, so no onMove/onPostResult wiring.
+    //   return (
+    //     <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+    //       <FootballGame
+    //         onClose={onClose}
+    //         onEndGame={onEndGame}
+    //         onPlayAgain={onPlayAgain}
+    //         isHost={activeGame.host_id === currentUserId}
+    //         hostUsername={activeGame.players?.find((p) => p.user_id === activeGame.host_id)?.username}
+    //       />
+    //     </Suspense>
+    //   );
 
-    case 'blob_battle':
-      // Real-time N-player (2-8) Agar.io-style free-for-all — mass is
-      // authoritatively tracked server-side, not self-reported (see
-      // blob_battle.go's file-level note on why this game breaks from the
-      // "casual trust" model everywhere else in this arcade layer).
-      return (
-        <BlobBattleGame
-          gameState={activeGame}
-          players={activeGame.players}
-          currentUserId={currentUserId}
-          onMove={handleMove}
-          onClose={onClose}
-          onEndGame={onEndGame}
-          onPostResult={onPostResult}
-        />
-      );
+    // case 'blob_battle': temporarily removed
+    //   // Real-time N-player (2-8) Agar.io-style free-for-all — mass is
+    //   // authoritatively tracked server-side, not self-reported (see
+    //   // blob_battle.go's file-level note on why this game breaks from the
+    //   // "casual trust" model everywhere else in this arcade layer).
+    //   return (
+    //     <BlobBattleGame
+    //       gameState={activeGame}
+    //       players={activeGame.players}
+    //       currentUserId={currentUserId}
+    //       onMove={handleMove}
+    //       onClose={onClose}
+    //       onEndGame={onEndGame}
+    //       onPlayAgain={onPlayAgain}
+    //       onPostResult={onPostResult}
+    //     />
+    //   );
 
-    case 'hide_seek':
-      // Real-time N-player (2-8) hidden-role game — the first genuinely
-      // asymmetric-information game in this arcade layer, and the only
-      // one needing gameErrorMsg/gameErrorKey (for surfacing "that spot is
-      // already taken," the one common rejection a Prop has no client-side
-      // way to predict — see hide_seek.go's file-level note).
-      return (
-        <HideSeekGame
-          gameState={activeGame}
-          players={activeGame.players}
-          currentUserId={currentUserId}
-          onMove={handleMove}
-          onClose={onClose}
-          onEndGame={onEndGame}
-          onPostResult={onPostResult}
-          gameErrorMsg={gameErrorMsg}
-          gameErrorKey={gameErrorKey}
-        />
-      );
+    // hide_seek removed 2026-08 at user request (commented out, not
+    // deleted, alongside its GameLobbyModal.jsx entry — the game is now
+    // unreachable but can be restored by uncommenting both).
+    // case 'hide_seek':
+    //   // Real-time N-player (2-8) hidden-role game — the first genuinely
+    //   // asymmetric-information game in this arcade layer, and the only
+    //   // one needing gameErrorMsg/gameErrorKey (for surfacing "that spot is
+    //   // already taken," the one common rejection a Prop has no client-side
+    //   // way to predict — see hide_seek.go's file-level note).
+    //   return (
+    //     <HideSeekGame
+    //       gameState={activeGame}
+    //       players={activeGame.players}
+    //       currentUserId={currentUserId}
+    //       onMove={handleMove}
+    //       onClose={onClose}
+    //       onEndGame={onEndGame}
+    //       onPlayAgain={onPlayAgain}
+    //       onPostResult={onPostResult}
+    //       gameErrorMsg={gameErrorMsg}
+    //       gameErrorKey={gameErrorKey}
+    //     />
+    //   );
 
     case 'snakes_ladders':
       return (
@@ -771,6 +858,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -784,6 +872,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -799,6 +888,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
             onMove={handleMove}
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
             onPostResult={onPostResult}
           />
         </Suspense>
@@ -814,6 +904,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -828,6 +919,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
           gameErrorMsg={gameErrorMsg}
           gameErrorKey={gameErrorKey}
@@ -843,6 +935,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -856,6 +949,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -870,6 +964,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
           onPostResult={onPostResult}
         />
       );
@@ -883,6 +978,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPlayAgain={onPlayAgain}
         />
       );
 
@@ -892,6 +988,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           <SpaceAttackGame
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
             isHost={activeGame.host_id === currentUserId}
           />
         </Suspense>
@@ -908,6 +1005,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           <ToadBallGame
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
             isHost={activeGame.host_id === currentUserId}
             hotSeatTournament={hotSeatTournament}
             currentUserId={currentUserId}
@@ -927,6 +1025,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           <RhythmHeroGame
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
             isHost={activeGame.host_id === currentUserId}
             hotSeatTournament={hotSeatTournament}
             currentUserId={currentUserId}
@@ -946,27 +1045,31 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
         </Suspense>
       );
 
-    case 'golf':
-      // Arcade: single-player or hot-seat tournament, iframe-embedded (see
-      // GolfGame.jsx header) — combines toad_ball's hot-seat precedence with
-      // fowl_play's iframe/postMessage shape, since golf has no server-side
-      // move logic of its own (a real Vercel-hosted fork, not a relay).
-      // onRelayPacket/registerRelayReceiver carry the active player's live
-      // ball-position updates to every spectator's own read-only mirror.
-      return (
-        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
-          <GolfGame
-            onClose={onClose}
-            onEndGame={onEndGame}
-            isHost={activeGame.host_id === currentUserId}
-            hotSeatTournament={hotSeatTournament}
-            currentUserId={currentUserId}
-            onTournamentScore={onTournamentScore}
-            onRelayPacket={onRelayPacket}
-            registerRelayReceiver={registerRelayReceiver}
-          />
-        </Suspense>
-      );
+    // 3D Golf removed 2026-08 at user request (commented out, not deleted,
+    // alongside its GameLobbyModal.jsx entry) — pending a hand-built 2D
+    // replacement. Restore by uncommenting both plus the lazy import above.
+    // case 'golf':
+    //   // Arcade: single-player or hot-seat tournament, iframe-embedded (see
+    //   // GolfGame.jsx header) — combines toad_ball's hot-seat precedence with
+    //   // fowl_play's iframe/postMessage shape, since golf has no server-side
+    //   // move logic of its own (a real Vercel-hosted fork, not a relay).
+    //   // onRelayPacket/registerRelayReceiver carry the active player's live
+    //   // ball-position updates to every spectator's own read-only mirror.
+    //   return (
+    //     <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+    //       <GolfGame
+    //         onClose={onClose}
+    //         onEndGame={onEndGame}
+    //         onPlayAgain={onPlayAgain}
+    //         isHost={activeGame.host_id === currentUserId}
+    //         hotSeatTournament={hotSeatTournament}
+    //         currentUserId={currentUserId}
+    //         onTournamentScore={onTournamentScore}
+    //         onRelayPacket={onRelayPacket}
+    //         registerRelayReceiver={registerRelayReceiver}
+    //       />
+    //     </Suspense>
+    //   );
 
     case 'slice_frenzy':
       // Arcade: single-player or hot-seat tournament — same self-contained
@@ -978,6 +1081,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
           <SliceFrenzyGame
             onClose={onClose}
             onEndGame={onEndGame}
+            onPlayAgain={onPlayAgain}
             isHost={activeGame.host_id === currentUserId}
             hotSeatTournament={hotSeatTournament}
             currentUserId={currentUserId}
@@ -986,22 +1090,23 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
         </Suspense>
       );
 
-    case 'skeeball':
-      // Arcade: single-player or hot-seat tournament — same shape as
-      // slice_frenzy (self-contained canvas gameplay, no server move logic,
-      // no live spectator relay).
-      return (
-        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
-          <SkeeballGame
-            onClose={onClose}
-            onEndGame={onEndGame}
-            isHost={activeGame.host_id === currentUserId}
-            hotSeatTournament={hotSeatTournament}
-            currentUserId={currentUserId}
-            onTournamentScore={onTournamentScore}
-          />
-        </Suspense>
-      );
+    // case 'skeeball': temporarily removed
+    //   // Arcade: single-player or hot-seat tournament — same shape as
+    //   // slice_frenzy (self-contained canvas gameplay, no server move logic,
+    //   // no live spectator relay).
+    //   return (
+    //     <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+    //       <SkeeballGame
+    //         onClose={onClose}
+    //         onEndGame={onEndGame}
+    //         onPlayAgain={onPlayAgain}
+    //         isHost={activeGame.host_id === currentUserId}
+    //         hotSeatTournament={hotSeatTournament}
+    //         currentUserId={currentUserId}
+    //         onTournamentScore={onTournamentScore}
+    //       />
+    //     </Suspense>
+    //   );
 
     // case 'roulette': temporarily removed
     // return (

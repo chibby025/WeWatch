@@ -343,6 +343,18 @@ export default function LeftSidebar({
     }
   }, [sessionStatus, isLeftSidebarOpen, hidePreviewThumbnails, isSessionPrivate]);
 
+  // 🐛 DEBUG: fires every time the sessionStatus PROP object changes (new
+  // reference) — tells us whether fresh data from the backend is even
+  // reaching this component at all, independent of what the icons end up
+  // rendering. Remove once the content-rating-staleness bug is confirmed fixed.
+  useEffect(() => {
+    console.log('🐛 [LeftSidebar DEBUG] sessionStatus prop changed:', {
+      session_id: sessionStatus?.id,
+      content_rating: sessionStatus?.content_rating,
+      full_sessionStatus: sessionStatus,
+    });
+  }, [sessionStatus]);
+
   // Auto-close sidebar when mouse leaves (unless screen sharing)
   useEffect(() => {
     if (!isLeftSidebarOpen || !sidebarRef.current) return;
@@ -1278,10 +1290,22 @@ export default function LeftSidebar({
             const contentRating = sessionStatus?.content_rating || 'G';
             const showGameButton = !['Educational', 'Religious'].includes(contentRating);
             const showReligiousButtons = contentRating === 'Religious';
-            
+
             // Check if Quiz button should show (Lecture Hall OR Educational content)
             const showQuizButton = ((watchType === 'classroom' && classType === 'lecture_hall') || contentRating === 'Educational') && onQuizClick;
-            
+
+            // 🐛 DEBUG: fires on every render of this icon row — shows exactly
+            // what contentRating this render read and which icons it decided
+            // to show. Remove once the content-rating-staleness bug is confirmed fixed.
+            console.log('🐛 [LeftSidebar DEBUG] icon row render:', {
+              contentRating,
+              showGameButton,
+              showReligiousButtons,
+              showQuizButton,
+              raw_sessionStatus_content_rating: sessionStatus?.content_rating,
+              raw_sessionStatus_session_id: sessionStatus?.id,
+            });
+
             return (
               <div className="flex justify-around items-center gap-4 mb-3 sm:mb-4 px-2">
                 {/* START/END GAME BUTTON (Host Only - Hidden for Educational/Religious) */}

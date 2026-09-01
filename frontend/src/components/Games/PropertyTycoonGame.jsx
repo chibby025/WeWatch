@@ -110,7 +110,7 @@ function Space({ index, space, owner, houses, positions, onClick, isCorner }) {
   );
 }
 
-export default function PropertyTycoonGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function PropertyTycoonGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const gs = gameState?.game_state || {};
   const cash = gs.cash || {};
   const positionsMap = gs.positions || {};
@@ -196,6 +196,7 @@ export default function PropertyTycoonGame({ gameState, players, currentUserId, 
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
 

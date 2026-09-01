@@ -281,7 +281,7 @@ function OpponentStripMobile({ pKey, guesses, results, eliminated, winnerKey, us
   );
 }
 
-export default function WordleGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function WordleGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const [currentInput, setInput]   = useState('');
   const [shake, setShake]          = useState(false);
   const [message, setMessage]      = useState('');
@@ -525,6 +525,7 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
           ]}}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
 
@@ -566,6 +567,11 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
               >
                 <span style={{ fontSize: 14 }}>💡</span>
                 <span style={{ fontSize: 8 }}>{hintUsed ? 'USED' : 'HINT'}</span>
+              </button>
+            )}
+            {!isOver && (
+              <button onClick={onEndGame} className="px-2.5 py-1 bg-red-900 hover:bg-red-700 text-white rounded-lg text-xs font-semibold transition-colors">
+                End Game
               </button>
             )}
             <button onClick={isOver ? onClose : onEndGame} className="text-gray-400 hover:text-white p-1">
@@ -722,19 +728,6 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
                   <span style={{ fontSize: 18 }}>💡</span>
                   <span style={{ fontSize: 9 }}>{hintUsed ? 'USED' : 'HINT'}</span>
                 </button>
-                <button
-                  onPointerDown={e => { e.preventDefault(); onEndGame?.(); }}
-                  style={{
-                    width: 46, height: 58, borderRadius: 4, border: 'none',
-                    background: '#7f1d1d', color: '#fff', fontWeight: 700, fontSize: 10,
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                    gap: 2, cursor: 'pointer', userSelect: 'none',
-                  }}
-                  title="End game for everyone"
-                >
-                  <X size={15} />
-                  <span style={{ fontSize: 9 }}>END</span>
-                </button>
               </div>
             )}
 
@@ -859,16 +852,6 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
               </div>
             )}
           </div>
-        )}
-
-        {/* End game only when eliminated (no keyboard) */}
-        {!isOver && isElim && (
-          <button
-            onClick={onEndGame}
-            className="mt-3 px-6 py-1.5 bg-red-900 hover:bg-red-700 text-white rounded-xl text-xs font-semibold transition-colors"
-          >
-            End Game
-          </button>
         )}
       </div>
     </>

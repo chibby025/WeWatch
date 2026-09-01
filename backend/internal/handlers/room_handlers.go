@@ -689,6 +689,22 @@ func CreateWatchSession(c *gin.Context) {
 		if err := DB.First(&room, rid).Error; err != nil {
 			return
 		}
+
+		// Room-wide session_status refresh — closes a real gap: the
+		// session_started broadcast just above (and the lobby/member ones
+		// below) DO carry content_rating, but nothing in useWebSocket.js
+		// ever listens for session_started at all, so it was silently
+		// dropped. sessionStatus (LeftSidebar.jsx's only source of
+		// content_rating for its Bible/Sermon/Hymn/Game/Record icon gating)
+		// stayed stuck on whatever the PREVIOUS session in this room had
+		// until something else forced a real WS reconnect. session_status
+		// already has a correct, working, full-replace handler on the
+		// frontend — this reuses it instead of adding a second, narrower
+		// one just for session_started.
+		if hub != nil {
+			hub.BroadcastFreshSessionStatus(session, &room)
+		}
+
 		var host models.User
 		DB.Select("username").First(&host, hostID)
 

@@ -1957,6 +1957,14 @@ func CreateInstantWatchHandler(c *gin.Context) {
 		if hub == nil {
 			return
 		}
+
+		// Room-wide session_status refresh — same fix as CreateWatchSession,
+		// for the instant-watch room-creation path (a fresh room is created
+		// per instant-watch session, so this mainly matters for anyone
+		// already connected to newRoom.ID at this exact moment, e.g. a lobby
+		// client that had this room's page open before the session existed).
+		hub.BroadcastFreshSessionStatus(&watchSession, &newRoom)
+
 		var host models.User
 		DB.Select("username").First(&host, userID)
 		lobbyBroadcastData := map[string]interface{}{
@@ -3169,6 +3177,14 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 		}
 		var host models.User
 		DB.Select("username").First(&host, hostID)
+
+		// Room-wide session_status refresh — closes the gap where any client
+		// already connected to this room (the host's own tab included) keeps
+		// showing the PREVIOUS session's content_rating/media/etc, since
+		// starting a new session in-place never forces a WS reconnect and
+		// neither session_started (below, lobby-scoped) nor session_ended
+		// ever touch a connected client's sessionStatus on their own.
+		hub.BroadcastFreshSessionStatus(&session, &room)
 
 		// Lobby-wide broadcast so the Live tab refreshes for everyone
 		lobbyMsg, _ := json.Marshal(map[string]interface{}{

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
 
-export default function SudokuGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function SudokuGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const gs = gameState?.game_state || {};
   const puzzle = gs.puzzle || Array(81).fill(0);
   const phase = gs.phase || 'playing';
@@ -108,6 +108,7 @@ export default function SudokuGame({ gameState, players, currentUserId, onMove, 
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-900 text-white select-none overflow-y-auto">

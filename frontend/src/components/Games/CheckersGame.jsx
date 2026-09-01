@@ -72,7 +72,7 @@ function destinationsFor(board, from, mandatory) {
   return moves;
 }
 
-export default function CheckersGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function CheckersGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const [board, setBoard] = useState(Array(64).fill(''));
   const [currentTurn, setCurrentTurn] = useState(0);
   const [mustContinueFrom, setMustContinueFrom] = useState(null);
@@ -167,6 +167,11 @@ export default function CheckersGame({ gameState, players, currentUserId, onMove
           </div>
           <div className="flex items-center gap-2">
             <GameRulesButton gameType="checkers" />
+            {!winner && (
+              <button onClick={handleForfeit} className="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white text-sm font-semibold rounded-lg transition-colors">
+                End Game
+              </button>
+            )}
             <button onClick={handleForfeit} className="text-gray-400 hover:text-white transition-colors">
               <CloseIcon className="w-6 h-6" />
             </button>
@@ -243,15 +248,6 @@ export default function CheckersGame({ gameState, players, currentUserId, onMove
             })}
           </div>
         </div>
-
-        {/* Footer */}
-        {!winner && (
-          <div className="p-6 border-t border-gray-700 flex justify-end">
-            <button onClick={handleForfeit} className="px-6 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors">
-              End Game
-            </button>
-          </div>
-        )}
       </div>
     </div>
 
@@ -267,6 +263,7 @@ export default function CheckersGame({ gameState, players, currentUserId, onMove
         isForfeit={gameState?.status === 'forfeited'}
         onClose={onClose}
         onPostResult={onPostResult}
+        secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
       />
     )}
     </>

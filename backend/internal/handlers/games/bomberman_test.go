@@ -1,6 +1,9 @@
 package games
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func makeBombermanGS(playerIDs ...uint) *GameSessionState {
 	gs := makeGS("bomberman", playerIDs...)
@@ -497,5 +500,362 @@ func TestBombermanUnknownMoveTypeRejected(t *testing.T) {
 	_, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "teleport"})
 	if err == nil {
 		t.Fatalf("expected an error for an unrecognized move type")
+	}
+}
+
+// ---------- Carrying walls ----------
+
+func TestBombermanPickupWallRemovesFromSoftWallsAndTracksCarrying(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	// Replace the randomly-generated layout with one deterministic wooden
+	// wall so this test doesn't depend on the random generator having
+	// placed anything at a specific cell.
+	gs.GameData["soft_walls"] = []interface{}{[]interface{}{5.0, 5.0, float64(bombermanWallTierWood)}}
+	gm := &GameManager{}
+
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{
+		"move_type": "pickup_wall", "r": 5.0, "c": 5.0,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	softWalls, _ := gs.GameData["soft_walls"].([]interface{})
+	if len(softWalls) != 0 {
+		t.Fatalf("expected the wall to be removed from soft_walls, got %v", softWalls)
+	}
+	carried := bombermanCarriedWalls(gs.GameData)
+	entry, ok := carried["1"].([]interface{})
+	if !ok || len(entry) < 2 {
+		t.Fatalf("expected carried_walls[1] to be set, got %v", carried["1"])
+	}
+	if tier, _ := ppFloat(entry[0]); int(tier) != bombermanWallTierWood {
+		t.Fatalf("expected carried tier %d, got %v", bombermanWallTierWood, entry[0])
+	}
+	if hits, _ := ppFloat(entry[1]); hits != 0 {
+		t.Fatalf("expected 0 carried hits for an undamaged wall, got %v", entry[1])
+	}
+}
+
+func TestBombermanPickupWallPreservesExistingDamage(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["soft_walls"] = []interface{}{[]interface{}{5.0, 5.0, float64(bombermanWallTierIron)}}
+	gs.GameData["wall_hits"] = map[string]interface{}{"5,5": float64(2)}
+	gm := &GameManager{}
+
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{
+		"move_type": "pickup_wall", "r": 5.0, "c": 5.0,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	carried := bombermanCarriedWalls(gs.GameData)
+	entry, _ := carried["1"].([]interface{})
+	if hits, _ := ppFloat(entry[1]); hits != 2 {
+		t.Fatalf("expected the wall's existing 2 hits to travel with it when picked up, got %v", entry[1])
+	}
+	wallHits, _ := gs.GameData["wall_hits"].(map[string]interface{})
+	if _, exists := wallHits["5,5"]; exists {
+		t.Fatalf("expected the origin cell's wall_hits entry to be cleared once picked up, still has %v", wallHits["5,5"])
+	}
+}
+
+func TestBombermanPickupWallRejectsWhenAlreadyCarrying(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["soft_walls"] = []interface{}{
+		[]interface{}{5.0, 5.0, float64(bombermanWallTierWood)},
+		[]interface{}{6.0, 6.0, float64(bombermanWallTierWood)},
+	}
+	gm := &GameManager{}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "pickup_wall", "r": 5.0, "c": 5.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "pickup_wall", "r": 6.0, "c": 6.0}); err == nil {
+		t.Fatalf("expected an error picking up a second wall while already carrying one")
+	}
+}
+
+func TestBombermanPickupWallRejectsEmptyCell(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["soft_walls"] = []interface{}{}
+	gm := &GameManager{}
+	_, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "pickup_wall", "r": 5.0, "c": 5.0})
+	if err == nil {
+		t.Fatalf("expected an error picking up a wall from a cell with none")
+	}
+}
+
+func TestBombermanDropWallRestoresWallAndDamage(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["soft_walls"] = []interface{}{[]interface{}{5.0, 5.0, float64(bombermanWallTierConcrete)}}
+	gs.GameData["wall_hits"] = map[string]interface{}{"5,5": float64(1)}
+	gm := &GameManager{}
+
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "pickup_wall", "r": 5.0, "c": 5.0}); err != nil {
+		t.Fatalf("unexpected error on pickup: %v", err)
+	}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "drop_wall", "r": 3.0, "c": 3.0}); err != nil {
+		t.Fatalf("unexpected error on drop: %v", err)
+	}
+	softWalls, _ := gs.GameData["soft_walls"].([]interface{})
+	idx, tier := bombermanFindSoftWall(softWalls, 3, 3)
+	if idx == -1 {
+		t.Fatalf("expected a wall to now stand at the drop cell (3,3), got %v", softWalls)
+	}
+	if tier != bombermanWallTierConcrete {
+		t.Fatalf("expected the dropped wall's tier to be preserved (concrete=%d), got %d", bombermanWallTierConcrete, tier)
+	}
+	wallHits, _ := gs.GameData["wall_hits"].(map[string]interface{})
+	if got := ppIntFrom(wallHits["3,3"]); got != 1 {
+		t.Fatalf("expected the wall's 1 accumulated hit to be restored at the new location, got %d", got)
+	}
+	if len(bombermanCarriedWalls(gs.GameData)) != 0 {
+		t.Fatalf("expected carried_walls to be empty after a successful drop")
+	}
+}
+
+func TestBombermanDropWallRejectsWhenNotCarrying(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gm := &GameManager{}
+	_, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "drop_wall", "r": 3.0, "c": 3.0})
+	if err == nil {
+		t.Fatalf("expected an error dropping a wall when not carrying one")
+	}
+}
+
+func TestBombermanDropWallRejectsOccupiedCell(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["soft_walls"] = []interface{}{
+		[]interface{}{5.0, 5.0, float64(bombermanWallTierWood)},
+		[]interface{}{3.0, 3.0, float64(bombermanWallTierWood)},
+	}
+	gm := &GameManager{}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "pickup_wall", "r": 5.0, "c": 5.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "drop_wall", "r": 3.0, "c": 3.0}); err == nil {
+		t.Fatalf("expected an error dropping onto a cell that already has a wall")
+	}
+}
+
+func TestBombermanDropWallRejectsIndestructibleCell(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["soft_walls"] = []interface{}{[]interface{}{5.0, 5.0, float64(bombermanWallTierWood)}}
+	gm := &GameManager{}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "pickup_wall", "r": 5.0, "c": 5.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// (0,0) is the permanent border — always indestructible.
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "drop_wall", "r": 0.0, "c": 0.0}); err == nil {
+		t.Fatalf("expected an error dropping a wall onto an indestructible cell")
+	}
+}
+
+func TestBombermanDropWallRejectsCellWithLiveBomb(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["soft_walls"] = []interface{}{[]interface{}{5.0, 5.0, float64(bombermanWallTierWood)}}
+	gm := &GameManager{}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "pickup_wall", "r": 5.0, "c": 5.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "place_bomb", "r": 3.0, "c": 3.0}); err != nil {
+		t.Fatalf("unexpected error placing bomb: %v", err)
+	}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "drop_wall", "r": 3.0, "c": 3.0}); err == nil {
+		t.Fatalf("expected an error dropping a wall onto a cell with a live bomb")
+	}
+}
+
+// ---------- Kick ----------
+
+func TestBombermanKickBombRequiresKickUpgrade(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gm := &GameManager{}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "place_bomb", "r": 3.0, "c": 3.0}); err != nil {
+		t.Fatalf("unexpected error placing bomb: %v", err)
+	}
+	_, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{
+		"move_type": "kick_bomb", "bomb_id": 1.0, "new_r": 3.0, "new_c": 5.0,
+	})
+	if err == nil {
+		t.Fatalf("expected an error kicking a bomb without the Kick upgrade")
+	}
+}
+
+func TestBombermanKickBombRelocatesBomb(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["player_upgrades"] = map[string]interface{}{"1": map[string]interface{}{"has_kick": true}}
+	gm := &GameManager{}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "place_bomb", "r": 3.0, "c": 3.0}); err != nil {
+		t.Fatalf("unexpected error placing bomb: %v", err)
+	}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{
+		"move_type": "kick_bomb", "bomb_id": 1.0, "new_r": 3.0, "new_c": 7.0,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	bombs := bombermanActiveBombs(gs.GameData)
+	bomb, _ := bombs["1"].(map[string]interface{})
+	if r, _ := ppFloat(bomb["r"]); int(r) != 3 {
+		t.Fatalf("expected row unchanged at 3, got %v", bomb["r"])
+	}
+	if c, _ := ppFloat(bomb["c"]); int(c) != 7 {
+		t.Fatalf("expected the bomb relocated to column 7, got %v", bomb["c"])
+	}
+}
+
+func TestBombermanKickBombAnyPlayerCanKickAnyonesBombs(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	// Player 2 has Kick, player 1 (the bomb's actual owner) does not —
+	// classic Bomberman explicitly allows kicking an OPPONENT's bomb, no
+	// ownership check the way "explode" has.
+	gs.GameData["player_upgrades"] = map[string]interface{}{"2": map[string]interface{}{"has_kick": true}}
+	gm := &GameManager{}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "place_bomb", "r": 3.0, "c": 3.0}); err != nil {
+		t.Fatalf("unexpected error placing bomb: %v", err)
+	}
+	if _, _, err := gm.processBombermanMove(gs, 2, map[string]interface{}{
+		"move_type": "kick_bomb", "bomb_id": 1.0, "new_r": 3.0, "new_c": 9.0,
+	}); err != nil {
+		t.Fatalf("expected player 2 to be able to kick player 1's bomb, got error: %v", err)
+	}
+	bombs := bombermanActiveBombs(gs.GameData)
+	bomb, _ := bombs["1"].(map[string]interface{})
+	if c, _ := ppFloat(bomb["c"]); int(c) != 9 {
+		t.Fatalf("expected the bomb relocated to column 9, got %v", bomb["c"])
+	}
+}
+
+func TestBombermanKickBombUnknownBombIsHarmlessNoop(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["player_upgrades"] = map[string]interface{}{"1": map[string]interface{}{"has_kick": true}}
+	gm := &GameManager{}
+	_, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{
+		"move_type": "kick_bomb", "bomb_id": 999.0, "new_r": 3.0, "new_c": 7.0,
+	})
+	if err != nil {
+		t.Fatalf("expected a harmless no-op for a bomb that no longer exists, got error: %v", err)
+	}
+}
+
+// ---------- Power-up pickups ----------
+
+func TestBombermanGrabPickupAppliesBlastBonus(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["pickups"] = map[string]interface{}{"4,4": "blast"}
+	gm := &GameManager{}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "grab_pickup", "r": 4.0, "c": 4.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	upgrades := bombermanPlayerUpgrade(bombermanUpgradesMap(gs.GameData), "1")
+	if got := ppIntFrom(upgrades["blast_bonus"]); got != 1 {
+		t.Fatalf("expected blast_bonus=1, got %d", got)
+	}
+	if _, stillThere := bombermanPickupsMap(gs.GameData)["4,4"]; stillThere {
+		t.Fatalf("expected the pickup to be removed from the grid once grabbed")
+	}
+}
+
+func TestBombermanGrabPickupCapsAtMax(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gm := &GameManager{}
+	for i := 0; i < bombermanMaxBlastBonus+2; i++ {
+		key := fmt.Sprintf("%d,%d", i, i+1)
+		gs.GameData["pickups"] = map[string]interface{}{key: "blast"}
+		if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{
+			"move_type": "grab_pickup", "r": float64(i), "c": float64(i + 1),
+		}); err != nil {
+			t.Fatalf("unexpected error on grab %d: %v", i, err)
+		}
+	}
+	upgrades := bombermanPlayerUpgrade(bombermanUpgradesMap(gs.GameData), "1")
+	if got := ppIntFrom(upgrades["blast_bonus"]); got != bombermanMaxBlastBonus {
+		t.Fatalf("expected blast_bonus capped at %d, got %d", bombermanMaxBlastBonus, got)
+	}
+}
+
+func TestBombermanGrabPickupKickSetsFlag(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["pickups"] = map[string]interface{}{"4,4": "kick"}
+	gm := &GameManager{}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "grab_pickup", "r": 4.0, "c": 4.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	upgrades := bombermanPlayerUpgrade(bombermanUpgradesMap(gs.GameData), "1")
+	if hasKick, _ := upgrades["has_kick"].(bool); !hasKick {
+		t.Fatalf("expected has_kick=true after grabbing a kick pickup, got %v", upgrades["has_kick"])
+	}
+}
+
+func TestBombermanGrabPickupRaceSecondGrabIsNoop(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["pickups"] = map[string]interface{}{"4,4": "blast"}
+	gm := &GameManager{}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "grab_pickup", "r": 4.0, "c": 4.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, _, err := gm.processBombermanMove(gs, 2, map[string]interface{}{"move_type": "grab_pickup", "r": 4.0, "c": 4.0}); err != nil {
+		t.Fatalf("expected a harmless no-op for the race loser, got error: %v", err)
+	}
+	p2Upgrades := bombermanPlayerUpgrade(bombermanUpgradesMap(gs.GameData), "2")
+	if got := ppIntFrom(p2Upgrades["blast_bonus"]); got != 0 {
+		t.Fatalf("expected player 2 (the race loser) to gain nothing, got blast_bonus=%d", got)
+	}
+}
+
+func TestBombermanExplodeSpawnsPickupOnlyOnceWallActuallyBreaks(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	// A concrete (tier 2) wall — one hit is NOT enough to break it.
+	gs.GameData["soft_walls"] = []interface{}{[]interface{}{4.0, 4.0, float64(bombermanWallTierConcrete)}}
+	gm := &GameManager{}
+
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "place_bomb", "r": 1.0, "c": 2.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{
+		"move_type":        "explode",
+		"bomb_id":          1.0,
+		"wall_hits_delta":  []interface{}{[]interface{}{4.0, 4.0}},
+		"spawned_pickups":  []interface{}{[]interface{}{4.0, 4.0, "blast"}},
+	}); err != nil {
+		t.Fatalf("unexpected error on first explode: %v", err)
+	}
+	if len(bombermanPickupsMap(gs.GameData)) != 0 {
+		t.Fatalf("expected NO pickup yet -- the wall only took 1 of its 2 required hits, got %v", bombermanPickupsMap(gs.GameData))
+	}
+
+	// Second hit actually breaks it -- NOW the same spawned_pickups report
+	// should be honored.
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "place_bomb", "r": 1.0, "c": 2.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{
+		"move_type":        "explode",
+		"bomb_id":          2.0,
+		"wall_hits_delta":  []interface{}{[]interface{}{4.0, 4.0}},
+		"spawned_pickups":  []interface{}{[]interface{}{4.0, 4.0, "blast"}},
+	}); err != nil {
+		t.Fatalf("unexpected error on second explode: %v", err)
+	}
+	pickups := bombermanPickupsMap(gs.GameData)
+	if pickups["4,4"] != "blast" {
+		t.Fatalf("expected a blast pickup to spawn now that the wall has genuinely broken, got %v", pickups)
+	}
+}
+
+func TestBombermanExplodeSpawnedPickupSkipsInvalidType(t *testing.T) {
+	gs := makeBombermanGS(1, 2)
+	gs.GameData["soft_walls"] = []interface{}{[]interface{}{4.0, 4.0, float64(bombermanWallTierWood)}}
+	gm := &GameManager{}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{"move_type": "place_bomb", "r": 1.0, "c": 2.0}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, _, err := gm.processBombermanMove(gs, 1, map[string]interface{}{
+		"move_type":       "explode",
+		"bomb_id":         1.0,
+		"wall_hits_delta": []interface{}{[]interface{}{4.0, 4.0}},
+		"spawned_pickups": []interface{}{[]interface{}{4.0, 4.0, "invincibility"}},
+	}); err != nil {
+		t.Fatalf("unexpected error (an invalid pickup type should be silently skipped, not error the whole move): %v", err)
+	}
+	if len(bombermanPickupsMap(gs.GameData)) != 0 {
+		t.Fatalf("expected an unrecognized pickup type to be silently skipped, got %v", bombermanPickupsMap(gs.GameData))
 	}
 }

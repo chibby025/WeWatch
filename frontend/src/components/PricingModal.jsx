@@ -11,14 +11,6 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
   const [contentRating, setContentRating] = useState('G');
   const [scrollIndex, setScrollIndex] = useState(0);
 
-  // Pre-select user's saved preference when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      const saved = localStorage.getItem('pref_default_content_rating');
-      if (saved) setContentRating(saved);
-    }
-  }, [isOpen]);
-
   // Calculate user's age from date_of_birth
   const userAge = useMemo(() => {
     if (!currentUser?.date_of_birth) return 0; // Unknown age - allow all ratings
@@ -105,6 +97,50 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
     return ratings.filter(rating => userAge >= rating.minAge);
   }, [userAge]);
 
+  // Pre-select user's saved preference when modal opens. This reads
+  // pref_default_content_rating -- the SAME key UserPreferencesModal.jsx's
+  // explicit "Default Rating" setting writes -- so this is deliberately a
+  // read-only reflection of that setting, not a "remember my last carousel
+  // click" cache (see handleSelectPricing below for why that distinction
+  // matters).
+  //
+  // Steps the carousel there one card at a time (instead of an instant
+  // jump) so the saved rating visibly slides into place -- the host SEES it
+  // land on e.g. Religious rather than it silently already being selected,
+  // making it obvious when it needs changing for this session.
+  useEffect(() => {
+    if (!isOpen) return;
+    const saved = localStorage.getItem('pref_default_content_rating');
+    if (!saved) return;
+    const targetIndex = availableRatings.findIndex(r => r.id === saved);
+    if (targetIndex === -1) return; // saved rating isn't available for this user's age -- keep the 'G' default
+
+    let current = scrollIndex;
+    const direction = targetIndex > current ? 1 : targetIndex < current ? -1 : 0;
+    if (direction === 0) {
+      setContentRating(saved);
+      return;
+    }
+
+    const STEP_MS = 180;
+    let timer = null;
+    const advance = () => {
+      current += direction;
+      setScrollIndex(current);
+      setContentRating(availableRatings[current].id);
+      if (current !== targetIndex) {
+        timer = setTimeout(advance, STEP_MS);
+      }
+    };
+    timer = setTimeout(advance, STEP_MS);
+
+    return () => { if (timer) clearTimeout(timer); }; // cancel mid-animation if the modal closes
+    // scrollIndex is read only to capture the animation's starting point --
+    // including it would restart this effect (and the animation) on every
+    // single step it itself just took.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, availableRatings]);
+
   const pricingOptions = [
     {
       id: 'free',
@@ -153,7 +189,16 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
 
   const handleSelectPricing = (pricingId) => {
     console.log('🎬 [PricingModal] Calling onSelectPricing with:', { pricingId, contentRating });
-    localStorage.setItem('pref_default_content_rating', contentRating);
+    // Deliberately NOT writing contentRating back to pref_default_content_rating
+    // here. That key is the user's explicit "Default Rating" preference from
+    // Settings -> Preferences (UserPreferencesModal.jsx) -- overwriting it on
+    // every session meant a single one-off pick (e.g. trying Religious once)
+    // silently became the new default for every future session, discarding
+    // whatever the user had actually chosen as their standing preference.
+    // The pre-select effect above already shows whatever's currently saved
+    // (with the animated scroll into place, so it's never invisible) --
+    // picking something different for THIS session is a one-time override,
+    // not a change to the standing default.
     onSelectPricing(pricingId, contentRating);
   };
 

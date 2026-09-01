@@ -121,7 +121,17 @@ export default function SkeeballGame({ onClose, onEndGame, isHost, hotSeatTourna
   const isInTournament = !!hotSeatTournament;
   const isMyTurn = hotSeatTournament?.current_player_id === currentUserId;
   const myEntry = hotSeatTournament?.participants?.find((p) => p.user_id === currentUserId);
-  const alreadyScored = isInTournament && myEntry && myEntry.score != null;
+  // CONFIRMED root cause of "the game never starts, shows 'already played
+  // this round' immediately": HotSeatParticipant.Score is a plain Go `int`
+  // (hot_seat_tournament.go), which always serializes as a real 0 in the
+  // JSON payload from the moment the tournament is created — never actually
+  // null/absent, even for a player who hasn't taken their turn yet. Checking
+  // `myEntry.score != null` was therefore true for EVERY participant,
+  // immediately, before anyone had thrown a single ball. The backend
+  // already exposes exactly the right field for this — `played` (a real
+  // boolean, false until RecordScore actually runs for that player) — this
+  // now checks that instead.
+  const alreadyScored = isInTournament && !!myEntry?.played;
   const eliminated = isInTournament && !!myEntry?.eliminated;
   const shouldPlay = isHost && (!isInTournament || isMyTurn) && !alreadyScored;
   const isOver = ballsThrown >= TOTAL_BALLS;
@@ -346,6 +356,9 @@ export default function SkeeballGame({ onClose, onEndGame, isHost, hotSeatTourna
           <span className="text-yellow-400 font-bold text-sm">{totalScore} pts</span>
           <span className="text-gray-400 text-xs">Ball {Math.min(ballsThrown + 1, TOTAL_BALLS)}/{TOTAL_BALLS}</span>
           <GameRulesButton gameType="skeeball" />
+          <button onClick={handleForfeit} className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold">
+            {isInTournament ? 'End Game' : 'Close'}
+          </button>
           <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={isInTournament ? 'End for everyone' : 'Close'}>
             <X className="w-5 h-5" />
           </button>

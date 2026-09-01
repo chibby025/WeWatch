@@ -677,11 +677,34 @@ function WarmPerformanceMirror({
         if (cancelled || !engineRef.current) return;
         engineRef.current.start(audioCtxRef.current, audioBuffer, chart, { trackName, artistName });
         setReady(true);
+        // Self-healing held-lane resync: rhythm_hero_input is delivered via
+        // the Hub's per-client non-blocking send (silently dropped if that
+        // one client's own outbound buffer is momentarily backed up — a real
+        // connection-quality difference, not a bug in the sender). Since
+        // press/release is a pure event stream with no other periodic
+        // resync, a single dropped 'release' would otherwise leave a note
+        // stuck held on this mirror for the rest of the performance. The
+        // active player's own onLanePress/onLaneRelease (below) also
+        // maintains a heldLanesRef and periodically broadcasts a
+        // 'sync_held' snapshot of it — this mirror compares that snapshot
+        // against its own locally-applied held set and only calls
+        // pressLane/releaseLane for whatever differs, bounding any missed
+        // event to the ~2s resync interval instead of the whole song.
+        const mirroredHeld = new Set();
         register?.((data) => {
           if (!engineRef.current) return;
-          if (data.action === 'press') engineRef.current.pressLane(data.lane);
-          else if (data.action === 'release') engineRef.current.releaseLane(data.lane);
+          if (data.action === 'press') { mirroredHeld.add(data.lane); engineRef.current.pressLane(data.lane); }
+          else if (data.action === 'release') { mirroredHeld.delete(data.lane); engineRef.current.releaseLane(data.lane); }
           else if (data.action === 'star_power') engineRef.current.activateStarPower();
+          else if (data.action === 'sync_held' && Array.isArray(data.lanes)) {
+            const target = new Set(data.lanes);
+            for (const lane of mirroredHeld) {
+              if (!target.has(lane)) { mirroredHeld.delete(lane); engineRef.current.releaseLane(lane); }
+            }
+            for (const lane of target) {
+              if (!mirroredHeld.has(lane)) { mirroredHeld.add(lane); engineRef.current.pressLane(lane); }
+            }
+          }
         });
       } catch {
         if (!cancelled) setLoadError(true);
@@ -1087,6 +1110,18 @@ export default function RhythmHeroGame({
   // otherwise fire after the turn has already moved on.
   const isActivePlayerRef = useRef(isActivePlayer);
   isActivePlayerRef.current = isActivePlayer;
+  // Currently-held lanes on THIS (active player's) device — kept in sync by
+  // onLanePress/onLaneRelease above, periodically broadcast as a full
+  // snapshot so any connected spectator mirror can self-heal a dropped
+  // press/release event (see the mirror's own 'sync_held' handling).
+  const heldLanesRef = useRef(new Set());
+  useEffect(() => {
+    if (!isActivePlayer) return undefined;
+    const interval = setInterval(() => {
+      onRhythmHeroBroadcast?.('rhythm_hero_input', { action: 'sync_held', lanes: [...heldLanesRef.current] });
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [isActivePlayer, onRhythmHeroBroadcast]);
   // Read inside onEnd (below) at the moment the song actually finishes,
   // rather than adding the whole hotSeatTournament object to that heavy
   // engine-construction effect's own deps — which would otherwise re-run
@@ -1358,10 +1393,16 @@ export default function RhythmHeroGame({
       // state (removed; the sprite overlays animate from their own GIF
       // frame loop, not press/release events).
       onLanePress: (lane) => {
-        if (isActivePlayer) onRhythmHeroBroadcast?.('rhythm_hero_input', { action: 'press', lane });
+        if (isActivePlayer) {
+          heldLanesRef.current.add(lane);
+          onRhythmHeroBroadcast?.('rhythm_hero_input', { action: 'press', lane });
+        }
       },
       onLaneRelease: (lane) => {
-        if (isActivePlayer) onRhythmHeroBroadcast?.('rhythm_hero_input', { action: 'release', lane });
+        if (isActivePlayer) {
+          heldLanesRef.current.delete(lane);
+          onRhythmHeroBroadcast?.('rhythm_hero_input', { action: 'release', lane });
+        }
       },
       onEnd: (stats) => {
         if (endedHandledRef.current) return;
@@ -1440,6 +1481,7 @@ export default function RhythmHeroGame({
       stageId,
     });
     engineRef.current = engine;
+    heldLanesRef.current.clear(); // fresh song — never carry a stale held-lane snapshot into it
 
     engine.start(getAudioCtx(), audioBuffer, chart, meta);
 

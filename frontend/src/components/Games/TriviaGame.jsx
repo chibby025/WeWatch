@@ -787,6 +787,12 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose }
           <GameRulesButton gameType="trivia" />
           <button
             onClick={endOrLeave}
+            className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-colors"
+          >
+            {isHostUser ? 'End Game' : 'Leave'}
+          </button>
+          <button
+            onClick={endOrLeave}
             className="text-gray-400 hover:text-white hover:bg-gray-800 p-1.5 rounded-lg transition-colors"
             title={isHostUser ? 'End game for everyone' : 'Leave game'}
           >

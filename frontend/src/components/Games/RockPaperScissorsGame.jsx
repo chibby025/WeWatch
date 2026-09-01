@@ -10,7 +10,7 @@ const choices = [
   { id: 'scissors', name: 'Scissors', icon: '✂️' }
 ];
 
-export default function RockPaperScissorsGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPlayAgain, onPostResult }) {
+export default function RockPaperScissorsGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPlayAgain, onPostResult, introResolved = true }) {
   const [myPick, setMyPick] = useState(null);
   const [countdown, setCountdown] = useState(5);
   const [revealed, setRevealed] = useState(false);
@@ -37,12 +37,17 @@ export default function RockPaperScissorsGame({ gameState, players, currentUserI
   }, [gameState, players]);
 
   useEffect(() => {
+    // Don't start ticking while the GameStartInfoModal intro popup is still
+    // covering the screen (~2s) — previously this ran the instant the
+    // component mounted, racing against that popup and burning through 2 of
+    // the 5 seconds before the player could even see the countdown.
+    if (!introResolved) return;
     if (revealed || myPick) return;
     if (countdown > 0) {
       const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
       return () => clearTimeout(timer);
     }
-  }, [countdown, revealed, myPick]);
+  }, [countdown, revealed, myPick, introResolved]);
 
   const handlePick = (choice) => {
     if (myPick || revealed) return;
@@ -50,7 +55,12 @@ export default function RockPaperScissorsGame({ gameState, players, currentUserI
     onMove({ pick: choice });
   };
 
-  const isHost = players?.[0]?.user_id === currentUserId;
+  // gameState.host_id (the real, backend-confirmed host) rather than assuming
+  // players[0] is always the host — matches the pattern used everywhere else
+  // GameWinnerBanner's Play Again is wired in, and stays correct even if a
+  // future setup flow ever adds the host to the players list in a different
+  // position.
+  const isHost = gameState?.host_id === currentUserId;
 
   const getPlayerPick = (userId) => {
     if (!revealed) return null;
@@ -68,12 +78,32 @@ export default function RockPaperScissorsGame({ gameState, players, currentUserI
           <div className="flex items-center justify-between p-6 border-b border-gray-700">
             <div>
               <h2 className="text-2xl font-bold text-white mb-1">Rock Paper Scissors</h2>
-              <div className="text-sm text-gray-400">
-                {players.map(p => p.username).join(' vs ')}
+              <div className="flex items-center gap-1.5 flex-wrap text-sm text-gray-400">
+                {players.map((p, i) => (
+                  <span key={p.user_id} className="flex items-center gap-1.5">
+                    {i > 0 && <span className="text-gray-500">vs</span>}
+                    {p.avatar_url ? (
+                      <img src={p.avatar_url} alt={p.username} className="w-5 h-5 rounded-full object-cover" />
+                    ) : (
+                      <span className="w-5 h-5 rounded-full bg-gray-600 flex items-center justify-center text-[9px] font-bold text-white">
+                        {(p.username || '?').slice(0, 2).toUpperCase()}
+                      </span>
+                    )}
+                    <span>{p.username}</span>
+                  </span>
+                ))}
               </div>
             </div>
             <div className="flex items-center gap-2">
               <GameRulesButton gameType="rock_paper_scissors" />
+              {!winner && (
+                <button
+                  onClick={handleForfeit}
+                  className="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white text-sm font-semibold rounded-lg transition-colors"
+                >
+                  End Game
+                </button>
+              )}
               <button
                 onClick={revealed ? handleForfeit : handleForfeit}
                 className="text-gray-400 hover:text-white transition-colors"
@@ -140,18 +170,6 @@ export default function RockPaperScissorsGame({ gameState, players, currentUserI
               </div>
             )}
           </div>
-
-          {/* Footer — play again while waiting for banner dismiss */}
-          {!winner && (
-            <div className="p-6 border-t border-gray-700 flex justify-end gap-3">
-              <button
-                onClick={handleForfeit}
-                className="px-6 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors"
-              >
-                End Game
-              </button>
-            </div>
-          )}
         </div>
       </div>
 

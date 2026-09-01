@@ -126,7 +126,7 @@ function StorePit({ count, isTraveling }) {
   );
 }
 
-export default function MancalaGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function MancalaGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const [board, setBoard] = useState(Array(14).fill(0));               // authoritative, from server
   const [displayBoard, setDisplayBoard] = useState(Array(14).fill(0)); // what's actually rendered (animated)
   const [travelingSeed, setTravelingSeed] = useState(null);            // pit index the "in-flight" seed is currently at
@@ -310,6 +310,11 @@ export default function MancalaGame({ gameState, players, currentUserId, onMove,
             </div>
             <div className="flex items-center gap-2">
               <GameRulesButton gameType="mancala" className="text-amber-200 hover:text-white" />
+              {!isOver && (
+                <button onClick={handleForfeit} className="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white text-sm font-semibold rounded-lg transition-colors">
+                  End Game
+                </button>
+              )}
               <button onClick={handleForfeit} className="text-amber-200 hover:text-white transition-colors">
                 <CloseIcon className="w-6 h-6" />
               </button>
@@ -416,15 +421,6 @@ export default function MancalaGame({ gameState, players, currentUserId, onMove,
               <span className="mr-20">{players[0]?.username ?? 'Player 1'}'s pits</span>
             </div>
           </div>
-
-          {/* Footer */}
-          {!isOver && (
-            <div className="p-6 flex justify-end" style={{ borderTop: '1px solid rgba(217,119,6,0.25)' }}>
-              <button onClick={handleForfeit} className="px-6 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors">
-                End Game
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
@@ -440,6 +436,7 @@ export default function MancalaGame({ gameState, players, currentUserId, onMove,
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
     </>

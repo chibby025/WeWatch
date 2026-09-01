@@ -123,7 +123,7 @@ function DominoTile({ left, right, size = 30, onClick, selected, dimmed, faceDow
   );
 }
 
-export default function DominoesGame({ gameState, players = [], currentUserId, myHand, onMove, onClose, onEndGame, onPostResult }) {
+export default function DominoesGame({ gameState, players = [], currentUserId, myHand, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const [pendingTile, setPendingTile] = useState(null); // tile matching BOTH ends — needs a side choice
 
   const gs = gameState?.game_state || {};
@@ -392,6 +392,7 @@ export default function DominoesGame({ gameState, players = [], currentUserId, m
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
     </>

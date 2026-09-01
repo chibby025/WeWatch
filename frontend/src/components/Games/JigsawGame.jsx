@@ -193,7 +193,7 @@ function PuzzlePiece({ pieceId, row, col, cellW, cellH, edges, imageUrl, boardW,
   );
 }
 
-export default function JigsawGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function JigsawGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const gs = gameState?.game_state || {};
   const phase = gs.phase || 'setup';
   const puzzleType = gs.puzzle_type || 'regular';
@@ -714,6 +714,7 @@ export default function JigsawGame({ gameState, players, currentUserId, onMove, 
         isForfeit={gameState?.status === 'forfeited'}
         onClose={onClose}
         onPostResult={onPostResult}
+        secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
       />
     )}
     </>

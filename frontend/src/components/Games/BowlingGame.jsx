@@ -5,6 +5,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { X, Volume2, VolumeX } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
+import ControlsTutorialOverlay from './ControlsTutorialOverlay';
 import { BowlPhysics, FRAME_ROLL_TIME, BALL_RADIUS, BALL_LINE, BALL_HEIGHT, TRACK_WIDTH, PIN_POSITIONS } from './bowlingPhysics';
 
 // Real, GPL-3.0 bowling-alley/ball/pin assets from github.com/iliagrigorevdev/
@@ -42,7 +43,12 @@ const RELAY_STALE_MS = 600;
 
 // Module-level singleton promises — ammo.js and the glTF model are each
 // fetched/parsed exactly once for the whole page's lifetime, not once per
-// turn or per component remount.
+// turn or per component remount. CRITICAL: a rejected promise must be
+// cleared back to null (not left cached forever) — otherwise one transient
+// network hiccup on the very first load attempt permanently breaks bowling's
+// visuals (pins/ball/lane, all from the same glTF) for the rest of the page
+// session, since every subsequent .then()/.catch() would just immediately
+// re-reject against the same stale rejected promise with no way to retry.
 let ammoLoadPromise = null;
 function loadAmmo() {
   if (window.Ammo && typeof window.Ammo !== 'function') return Promise.resolve();
@@ -60,9 +66,9 @@ function loadAmmo() {
         window.Ammo().then((AmmoInstance) => {
           window.Ammo = AmmoInstance;
           resolve();
-        }, reject);
+        }, (e) => { ammoLoadPromise = null; reject(e); });
       };
-      script.onerror = () => reject(new Error('Failed to load the physics engine'));
+      script.onerror = () => { ammoLoadPromise = null; reject(new Error('Failed to load the physics engine')); };
       document.head.appendChild(script);
     });
   }
@@ -80,17 +86,37 @@ function loadBowlingScene() {
           const ballMesh = gltf.scene.children.find((c) => c.name === 'Ball');
           const pinMesh = gltf.scene.children.find((c) => c.name === 'Pin');
           if (!trackMesh || !ballMesh || !pinMesh) {
+            gltfLoadPromise = null;
             reject(new Error('Bowling scene is missing an expected mesh'));
             return;
           }
           resolve({ trackMesh, ballMesh, pinMesh });
         },
         undefined,
-        () => reject(new Error('Failed to load the bowling lane model')),
+        () => { gltfLoadPromise = null; reject(new Error('Failed to load the bowling lane model')); },
       );
     });
   }
   return gltfLoadPromise;
+}
+
+// Exported so GameLobbyModal/GameStartInfoModal can start warming these two
+// URLs into the browser's HTTP cache the moment bowling is merely being
+// BROWSED (carousel centered on it) or its intro popup is showing — well
+// before the full Three.js/Ammo.js scene actually needs to construct itself.
+// Deliberately a raw fetch(), not a call into loadAmmo()/loadBowlingScene()
+// themselves: those parse/instantiate the WASM module and glTF scene graph
+// immediately, which would mean paying that real CPU/memory cost twice (once
+// here, speculatively, and again for real once the game actually starts) —
+// a plain fetch only primes the HTTP cache, so the later real load call
+// still does the actual parsing exactly once, just against already-cached
+// bytes instead of a fresh network round-trip.
+// eslint-disable-next-line react-refresh/only-export-components -- same accepted cross-file data-export pattern already used by GameLobbyModal.jsx's getGameMeta
+export function preloadBowlingAssets() {
+  try {
+    fetch(AMMO_URL, { mode: 'cors', credentials: 'omit' }).catch(() => {});
+    fetch(SCENE_URL, { mode: 'cors', credentials: 'omit' }).catch(() => {});
+  } catch { /* best-effort only */ }
 }
 
 // ── Shared environment builder — lights + procedural walls/ceiling/floor.
@@ -349,7 +375,7 @@ function Scoreboard({ players, scoresMap, currentPlayerId }) {
   );
 }
 
-export default function BowlingGame({ gameState, players = [], currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function BowlingGame({ gameState, players = [], currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const mountRef = useRef(null);
   const sceneRef = useRef(null); // { camera, renderer, raycaster }
   const physicsRef = useRef(null);
@@ -363,6 +389,19 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
   // off the `gs` closure, since the animate loop runs every frame and can't
   // depend on a fresh closure the way a React effect can.
   const relayRef = useRef({ ball: null, pins: null, receivedAt: 0 });
+  // Velocity-extrapolation anchor for the passive/spectator scene's ball —
+  // same dead-reckoning technique already proven in TankBattleGame.jsx/
+  // BombermanGame.jsx/PingPongGame.jsx for a relayed object that only
+  // updates a few times a second: rather than bare-snapping the ball to
+  // whatever position the last packet said (which reads as a stutter/freeze
+  // between packets while the thrower's own physics keeps running smooth
+  // 60fps), estimate the ball's velocity from the delta between the last two
+  // packets and extrapolate its position forward every render frame in
+  // between. Rotation is left as a snap (no slerp) — a spinning ball's
+  // orientation is far less visually distracting mid-teleport than its
+  // position is, so this isn't worth the extra complexity.
+  const relayVelAnchorRef = useRef({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, t: 0 });
+  const RELAY_EXTRAPOLATION_CAP_S = 0.25;
   const pinMaskRef = useRef(-1); // -1 = unknown/full rack (matches BowlPhysics.resetPhysics's own convention)
   // A knocked-over pin lies flat and mostly disappears from view at this
   // camera angle — with nothing else marking the moment, a genuine strike
@@ -388,6 +427,20 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
 
   const [engineReady, setEngineReady] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  // Bumped to force the scene-build effect to re-run after a manual retry —
+  // see handleRetryLoad below. The effect's own deps stay [isMyTurn, isOver]
+  // deliberately (rebuilding on every render would be wrong), so a distinct
+  // "please try again" signal is needed.
+  const [retryTick, setRetryTick] = useState(0);
+
+  // Warm the physics-engine/lane-model URLs into the browser's HTTP cache the
+  // moment this component mounts — covers "preload fully while the
+  // GameStartInfoModal intro popup is still covering the screen", since this
+  // component is already mounted underneath that popup by the time it shows
+  // (matching BombermanGame.jsx's own introResolved-gated-countdown
+  // precedent). A no-op if GameLobbyModal already warmed the same URLs while
+  // this game was merely being browsed.
+  useEffect(() => { preloadBowlingAssets(); }, []);
 
   // Sound only ever plays on the active thrower's own device — spectators
   // have no local physics simulation and no per-throw broadcast to sync
@@ -437,7 +490,27 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
   }, [gs.pin_mask]);
   useEffect(() => {
     if (!gs.throw_progress) return; // cleared server-side once a throw settles — let it go stale naturally (RELAY_STALE_MS)
-    relayRef.current = { ball: gs.throw_progress.ball || null, pins: gs.throw_progress.pins || null, receivedAt: Date.now() };
+    const ball = gs.throw_progress.ball || null;
+    const now = Date.now();
+    const prevAnchor = relayVelAnchorRef.current;
+    const prevBall = relayRef.current.ball;
+    const wasFreshTurn = relayRef.current.ball && now - relayRef.current.receivedAt < RELAY_STALE_MS * 3;
+    if (ball && wasFreshTurn && prevBall) {
+      const dtSec = Math.max((now - prevAnchor.t) / 1000, 1 / 90);
+      relayVelAnchorRef.current = {
+        x: ball.x, y: ball.y, z: ball.z,
+        vx: (ball.x - prevBall.x) / dtSec,
+        vy: (ball.y - prevBall.y) / dtSec,
+        vz: (ball.z - prevBall.z) / dtSec,
+        t: now,
+      };
+    } else if (ball) {
+      // First packet of a fresh throw — no prior sample to derive a
+      // velocity from yet; hold position with zero velocity until the next
+      // packet arrives.
+      relayVelAnchorRef.current = { x: ball.x, y: ball.y, z: ball.z, vx: 0, vy: 0, vz: 0, t: now };
+    }
+    relayRef.current = { ball, pins: gs.throw_progress.pins || null, receivedAt: now };
   }, [gs.throw_progress]);
 
   const updateTouchRay = useCallback((clientX, clientY) => {
@@ -645,7 +718,17 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
       if (disposeFn) disposeFn();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMyTurn, isOver]);
+  }, [isMyTurn, isOver, retryTick]);
+
+  // Manual retry — clears whichever module-level promise(s) failed (both are
+  // already self-clearing on rejection, so this is really just "try loading
+  // again now" rather than needing to reset anything itself) and bumps
+  // retryTick so the scene-build effect above re-runs its Promise.all(...)
+  // from scratch.
+  const handleRetryLoad = useCallback(() => {
+    setLoadError(null);
+    setRetryTick((t) => t + 1);
+  }, []);
 
   // ── Reset physics for the NEXT throw within an already-open turn (a
   // strike/full-clear on frames < 9, or the 10th frame's own 2nd/3rd bonus
@@ -759,7 +842,16 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
         wasFresh = fresh;
         if (fresh) {
           ballMesh.visible = true;
-          ballMesh.position.set(relay.ball.x, relay.ball.y, relay.ball.z);
+          // Extrapolate the ball's position forward from the last-known
+          // velocity anchor instead of snapping straight to the raw relay
+          // sample — see relayVelAnchorRef's own comment above for why.
+          const anchor = relayVelAnchorRef.current;
+          const elapsedS = Math.min(Math.max((Date.now() - anchor.t) / 1000, 0), RELAY_EXTRAPOLATION_CAP_S);
+          ballMesh.position.set(
+            anchor.x + anchor.vx * elapsedS,
+            anchor.y + anchor.vy * elapsedS,
+            anchor.z + anchor.vz * elapsedS,
+          );
           ballMesh.quaternion.set(relay.ball.qx, relay.ball.qy, relay.ball.qz, relay.ball.qw);
           if (Array.isArray(relay.pins)) {
             for (let i = 0; i < 10 && i < relay.pins.length; i++) {
@@ -967,6 +1059,15 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
 
   return (
     <>
+      {isMyTurn && !isOver && (
+        <ControlsTutorialOverlay
+          gameType="bowling"
+          steps={[
+            { icon: 'swipe-lr', text: 'Drag left/right to line up your shot along the lane.' },
+            { icon: 'swipe-up', text: 'Then flick upward toward the pins to release the ball — a faster flick throws harder.' },
+          ]}
+        />
+      )}
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
         <div
           className="relative bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl mx-4 overflow-hidden flex flex-col"
@@ -986,6 +1087,11 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
                 {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
               </button>
               <GameRulesButton gameType="bowling" />
+              {!isOver && (
+                <button onClick={handleForfeit} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
+                  Forfeit
+                </button>
+              )}
               <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'Forfeit'}>
                 <X className="w-6 h-6" />
               </button>
@@ -1036,6 +1142,12 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-red-400 text-sm px-6 text-center">
                     <span>{loadError}</span>
                     <span className="text-gray-500 text-xs">Check your connection and try again.</span>
+                    <button
+                      onClick={handleRetryLoad}
+                      className="mt-2 px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium"
+                    >
+                      Retry
+                    </button>
                   </div>
                 )}
               </>
@@ -1050,14 +1162,6 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
           {!isMyTurn && !isOver && isPlayer && (
             <div className="px-5 pb-4 text-center text-gray-500 text-xs shrink-0">Waiting for your turn…</div>
           )}
-
-          {!isOver && (
-            <div className="flex justify-end px-5 pb-4 shrink-0">
-              <button onClick={handleForfeit} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
-                Forfeit
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
@@ -1070,6 +1174,7 @@ export default function BowlingGame({ gameState, players = [], currentUserId, on
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
     </>

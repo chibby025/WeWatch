@@ -189,7 +189,7 @@ function AmbientShards() {
 
 // ── Main component ───────────────────────────────────────────────────────────
 
-export default function GlassBridgeGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function GlassBridgeGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const gs = gameState?.game_state || {};
   const slots = gs.slots || 6;
   const revealed = gs.revealed || [];
@@ -649,6 +649,7 @@ export default function GlassBridgeGame({ gameState, players, currentUserId, onM
         isForfeit={gameState?.status === 'forfeited'}
         onClose={onClose}
         onPostResult={onPostResult}
+        secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
       />
     )}
     </>

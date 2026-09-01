@@ -39,6 +39,8 @@ func gamePosterURL(gameType string) string {
 	// 	return gamePostersBaseURL + "/v2/micro_racing.webp"
 	case "obby_parkour":
 		return gamePostersBaseURL + "/v2/obby_parkour.webp"
+	case "teeworlds":
+		return gamePostersBaseURL + "/v2/teeworlds.webp"
 	case "othello":
 		return gamePostersBaseURL + "/othello.webp"
 	case "checkers":
@@ -173,6 +175,7 @@ var minPlayersOverride = map[string]int{
 	"quake3":           1, // real N-player arena FPS, but solo (vs the empty arena/bots) is valid too
 	// "micro_racing": 1, // temporarily removed — real N-player kart racer, but solo (vs AI bots) is valid too
 	"obby_parkour": 1, // real N-player parkour course, but solo practice is valid too
+	"teeworlds":    1, // real N-player arena shooter, but solo (vs the empty arena) is valid too
 }
 
 // lowerScoreWinsGameTypes flips a hot-seat tournament's win condition —
@@ -459,6 +462,16 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
 		return
 	}
 
+
+	// A pure relay flag — set by the frontend's "Play Again" action
+	// (handlePlayAgain in VideoWatch.jsx) when it re-sends start_game with the
+	// same game_type/players as the match that just ended. Not persisted or
+	// used for anything server-side; it's echoed straight back in the
+	// game_started broadcast below purely so every connected client (not just
+	// whoever clicked Play Again) can skip re-showing the "here's what you're
+	// about to play" intro popup for a rematch of a game they already just saw
+	// the rules for a moment ago.
+	isReplay, _ := data["is_replay"].(bool)
 	var players []models.Player
 	for i, playerData := range playersData {
 		playerMap, ok := playerData.(map[string]interface{})
@@ -597,6 +610,7 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
 			"game_state":      gameStateBcast,
 			"current_turn":    currentTurn,
 			"status":          gameSession.Status,
+			"is_replay":       isReplay,
 		},
 	}
 

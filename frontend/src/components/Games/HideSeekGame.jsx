@@ -18,7 +18,7 @@ function roleOf(index, total) {
   return index < numHunters ? 'hunter' : 'prop';
 }
 
-export default function HideSeekGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, gameErrorMsg, gameErrorKey }) {
+export default function HideSeekGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, gameErrorMsg, gameErrorKey, onPlayAgain }) {
   const gs = gameState?.game_state || {};
   const phase = gs.phase || 'hiding';
   const isEnded = phase === 'ended' || gameState?.status === 'completed' || gameState?.status === 'forfeited';
@@ -126,6 +126,9 @@ export default function HideSeekGame({ gameState, players, currentUserId, onMove
             {myRole === 'hunter' ? '🔦 Hunter' : '📦 Prop'}
           </span>
           <GameRulesButton gameType="hide_seek" />
+          <button onClick={handleForfeit} className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold">
+            End Match
+          </button>
           <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title="End Match">
             <X className="w-5 h-5" />
           </button>
@@ -218,6 +221,7 @@ export default function HideSeekGame({ gameState, players, currentUserId, onMove
             isForfeit={gameState?.status === 'forfeited'}
             onClose={onClose}
             onPostResult={onPostResult}
+            secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
           />
         </div>
       )}

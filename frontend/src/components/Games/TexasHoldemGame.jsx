@@ -39,7 +39,7 @@ const PHASE_LABEL = {
 
 function numOf(v) { return Number(v) || 0; }
 
-export default function TexasHoldemGame({ gameState, players, currentUserId, myHand, onMove, onClose, onEndGame, onPostResult }) {
+export default function TexasHoldemGame({ gameState, players, currentUserId, myHand, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const gs = gameState?.game_state || {};
   const chips = gs.chips || {};
   const busted = gs.busted || {};
@@ -127,6 +127,7 @@ export default function TexasHoldemGame({ gameState, players, currentUserId, myH
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
 

@@ -117,6 +117,28 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     try { localStorage.setItem('air_hockey_sound_enabled', String(soundEnabled)); } catch { /* ignore */ }
   }, [soundEnabled]);
 
+  // Connection-staleness indicator — P2/spectator side only. Same reasoning
+  // as PingPongGame.jsx's identical block: P1 (the physics authority)
+  // generates state_sync locally every ~100ms during 'playing' regardless of
+  // whether it's reaching anyone, so a healthy P2/spectator connection
+  // should see gameState update on roughly that cadence — a much longer gap
+  // while still nominally 'playing' reliably means something's wrong on the
+  // wire. Not shown for P1, which has no equally reliable version of this
+  // signal (whether P1's own broadcasts echo back to itself isn't
+  // guaranteed, risking false positives during perfectly healthy play with
+  // no discrete events happening).
+  const [connectionStale, setConnectionStale] = useState(false);
+  useEffect(() => {
+    if (isP1) return undefined;
+    const STALE_AFTER_MS = 1500;
+    const check = () => {
+      const stale = phase === 'playing' && Date.now() - S.current.lastGameStateAt > STALE_AFTER_MS;
+      setConnectionStale(stale);
+    };
+    const id = setInterval(check, 400);
+    return () => clearInterval(id);
+  }, [isP1, phase]);
+
   // All mutable state in one ref — no re-renders from physics.
   const S = useRef({
     puck: { x: W / 2, y: H / 2, vx: 0, vy: 0 },
@@ -146,6 +168,10 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     lastTime: 0,
     lastMalletSend: 0,
     justServedLocally: false, // set in handleServeTap, consumed once in the sync effect so whoever tapped never hears their own serve sound twice
+    // Last time gameState actually changed — used for the connection-
+    // staleness indicator below (P2/spectator side only; see its own
+    // comment for why P1 doesn't have an equally reliable version of this).
+    lastGameStateAt: Date.now(),
     p1Id, p2Id, myId, isP1, isP2,
   });
 
@@ -154,6 +180,7 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     gsRef.current = gameState?.game_state || {};
     const gsCurrent = gsRef.current;
     const s = S.current;
+    s.lastGameStateAt = Date.now();
     const prevPhase = s.lastKnownPhase;
     s.lastKnownPhase = gsCurrent.phase;
     const justEnteredPlaying = prevPhase !== 'playing' && gsCurrent.phase === 'playing';
@@ -560,6 +587,17 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
         <span className={`font-semibold ${isP1 ? 'text-red-300' : 'text-red-400/70'}`}>{p1Name} {isP1 ? '(You ↑)' : '↑'}</span>
         <span className={`font-semibold ${isP2 ? 'text-blue-300' : 'text-blue-400/70'}`}>{isP2 ? '(You ↓) ' : '↓ '}{p2Name}</span>
       </div>
+
+      {/* Connection-unstable notice — see the connectionStale effect's own
+          comment for why this is P2/spectator-only. A thin bar rather than a
+          blocking overlay: the game itself keeps rendering (frozen at its
+          last known position via the extrapolation cap) underneath, this
+          just tells the player WHY, instead of an unexplained freeze. */}
+      {connectionStale && (
+        <div className="text-center text-xs font-semibold py-1 shrink-0 bg-amber-900/70 text-amber-200 animate-pulse">
+          ⚠️ Connection unstable — reconnecting…
+        </div>
+      )}
 
       {/* Canvas */}
       <div className="flex-1 min-h-0 relative flex items-center justify-center overflow-hidden px-2 py-1">

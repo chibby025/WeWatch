@@ -489,9 +489,17 @@ export default function WhotGame({ gameState, players = [], currentUserId, myHan
               <p className="text-green-300/70 text-[11px]">{players.map(p => p.username).join(' · ')}</p>
             </div>
           </div>
-          <button onClick={handleForfeit} className="text-white/50 hover:text-white p-1 transition-colors">
-            <X className="w-5 h-5"/>
-          </button>
+          <div className="flex items-center gap-2">
+            {!isOver && (
+              <button onClick={handleForfeit}
+                className="px-3 py-1 rounded-lg bg-red-700/80 hover:bg-red-600 text-white text-sm font-semibold transition-colors">
+                Forfeit
+              </button>
+            )}
+            <button onClick={handleForfeit} className="text-white/50 hover:text-white p-1 transition-colors">
+              <X className="w-5 h-5"/>
+            </button>
+          </div>
         </div>
 
         {/* ── Opponents ── */}
@@ -612,16 +620,6 @@ export default function WhotGame({ gameState, players = [], currentUserId, myHan
                 </div>
               )}
             </div>
-          </div>
-        )}
-
-        {/* ── Footer ── */}
-        {!isOver && (
-          <div className="relative z-10 flex justify-end px-5 pb-4">
-            <button onClick={handleForfeit}
-              className="px-4 py-1.5 rounded-lg bg-red-700/80 hover:bg-red-600 text-white text-sm font-semibold transition-colors">
-              Forfeit
-            </button>
           </div>
         )}
 

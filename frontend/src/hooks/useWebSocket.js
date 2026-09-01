@@ -6,6 +6,42 @@ import { verifySessionExists, API_BASE_URL } from '../services/api';
 // ✅ GLOBAL CONNECTION POOL: Prevents duplicate connections across component remounts
 const activeConnections = new Map(); // Key: "roomId-sessionId", Value: { ws, refCount, subscribers }
 
+// Move types that are pure "latest position/state wins" snapshots — sending
+// an older one after a newer one exists is never useful, only wasteful.
+// Mirrors (a strict subset of) the backend's own volatileRT map in
+// game_manager.go, which marks these same move types as not worth
+// persisting/counting as real move history for the identical reason.
+// Deliberately narrower than that backend list: excludes game_event/fire/
+// view_ack, whose "is this genuinely a one-off discrete action vs. a
+// repeated snapshot" nature isn't verifiable from here — wrongly deduping a
+// real discrete event would be a correctness regression, not an
+// improvement, so those still queue normally.
+//
+// Real bug this fixes: on a real disconnect (not just a missed frame),
+// every one of these move types keeps getting queued below at whatever rate
+// its own game's physics loop runs (e.g. Ping Pong/Air Hockey's state_sync
+// at ~10Hz, paddle_move/mallet_move at ~30-40Hz) for the FULL length of the
+// outage, since those loops run independent of connection state — a
+// multi-second drop can queue hundreds of now-meaningless stale snapshots.
+// Without this, ws.onopen's processQueue (below) replays every one of them
+// in order once reconnected — a slow-motion "instant replay" of stale
+// positions instead of a clean resume — while the OTHER player's screen sat
+// frozen (extrapolation capped at ~0.35s) for the entire outage with zero
+// indication anything was wrong. Reported as "the game freezes/stalls on
+// bad network." Keeping only the single latest queued snapshot per move
+// type means the very next successful send is always current, and the
+// receiving side resumes cleanly the instant the connection returns instead
+// of catching up through a backlog.
+const LATEST_WINS_MOVE_TYPES = new Set([
+  'state_sync', 'paddle_move', 'mallet_move', 'shot_progress',
+  'throw_progress', 'shoot_progress', 'piece_drag', 'ball_sync',
+]);
+
+function isLatestWinsMessage(message) {
+  return !!message && typeof message === 'object' && message.type === 'make_move'
+    && LATEST_WINS_MOVE_TYPES.has(message.data?.move_type);
+}
+
 export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
   // Hook called with roomId, wsToken, sessionId
   
@@ -805,17 +841,38 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
   // sessionStatus changes are tracked internally
 
   // ✅ SIMPLIFIED sendMessage — AUTO-DETECTS TEXT vs BINARY
+  // Shared by both enqueue sites below (socket-not-open, and a synchronous
+  // send exception) — see LATEST_WINS_MOVE_TYPES' own comment for why this
+  // exists. For a latest-wins move, drop any earlier queued message of the
+  // exact same move_type before pushing the new one, so the queue never
+  // holds more than one stale snapshot of any given fast-changing value.
+  // Every other message type queues exactly as before, unchanged.
+  const enqueueMessage = useCallback((message) => {
+    if (isLatestWinsMessage(message)) {
+      const moveType = message.data.move_type;
+      const before = messageQueueRef.current.length;
+      messageQueueRef.current = messageQueueRef.current.filter(
+        (m) => !(isLatestWinsMessage(m) && m.data.move_type === moveType)
+      );
+      if (messageQueueRef.current.length < before) {
+        logger.debug(`[useWebSocket] Superseded ${before - messageQueueRef.current.length} stale queued '${moveType}' message(s)`);
+      }
+    }
+    if (messageQueueRef.current.length >= MAX_QUEUE_SIZE) {
+      logger.error("useWebSocket: ❌ Message queue full, dropping message");
+      return false;
+    }
+    messageQueueRef.current.push(message);
+    setBufferFullness((messageQueueRef.current.length / MAX_QUEUE_SIZE) * 100);
+    return true;
+  }, []);
+
   const sendMessage = useCallback((message) => {
     logger.debug("[useWebSocket] sendMessage called with:", message, "Socket state:", socket ? socket.readyState : "N/A")
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       logger.warn("useWebSocket: Socket not open, queueing message:", message);
-      if (messageQueueRef.current.length >= MAX_QUEUE_SIZE) {
-        logger.error("useWebSocket: ❌ Message queue full, dropping message");
-        return false;
-      }
-      messageQueueRef.current.push(message);
+      enqueueMessage(message);
       logger.debug("[useWebSocket] Message queued. Current queue size:", messageQueueRef.current.length);
-      setBufferFullness((messageQueueRef.current.length / MAX_QUEUE_SIZE) * 100);
       return false;
     }
 
@@ -839,11 +896,10 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
       }
     } catch (error) {
       logger.error("useWebSocket: 🐞 Error sending message:", error, message);
-      messageQueueRef.current.push(message);
-      setBufferFullness((messageQueueRef.current.length / MAX_QUEUE_SIZE) * 100);
+      enqueueMessage(message);
       return false;
     }
-  }, [socket]);
+  }, [socket, enqueueMessage]);
 
   // ✅ Wait for backend acknowledgment of a specific message type
   // Returns a Promise that resolves when ack is received or times out

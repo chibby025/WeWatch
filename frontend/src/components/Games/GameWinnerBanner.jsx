@@ -32,7 +32,7 @@ const GAME_LABELS = {
   dominoes: 'Dominoes',
   darts: 'Darts',
   bowling: 'Bowling',
-  basketball: 'Basketball H.O.R.S.E',
+  basketball: 'Basketball Shootout',
   archery: 'Archery Battle',
   curling: 'Curling',
   slice_frenzy: 'Slice Frenzy',

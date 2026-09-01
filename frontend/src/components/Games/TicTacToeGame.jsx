@@ -1,6 +1,6 @@
 // src/components/Games/TicTacToeGame.jsx
 import { useState, useEffect, useMemo } from 'react';
-import { X as CloseIcon, Users } from 'lucide-react';
+import { X as CloseIcon } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
 
@@ -64,23 +64,28 @@ export default function TicTacToeGame({ gameState, players, currentUserId, onMov
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
         <div className="relative bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
 
-          {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-gray-700">
-            <div>
+          {/* Header — logo, players, info, and close all in one row */}
+          <div className="flex items-center justify-between gap-3 p-6 border-b border-gray-700">
+            <div className="flex items-center gap-2 min-w-0">
               <img
                 src="https://LetsWatchOut.b-cdn.net/games/logos/tic_tac_toe.webp"
                 alt="Tic Tac Toe"
-                className="h-8 sm:h-9 w-auto mb-1"
+                className="h-7 w-auto shrink-0"
               />
-              <div className="flex items-center gap-2 text-sm">
-                <Users className="w-4 h-4 text-gray-400" />
-                <span className="text-gray-400">
-                  {players.map(p => p.username).join(' vs ')}
-                </span>
-              </div>
+              <span className="text-gray-400 text-sm truncate">
+                {players.map(p => p.username).join(' vs ')}
+              </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <GameRulesButton gameType="tic_tac_toe" />
+              {!winner && (
+                <button
+                  onClick={handleForfeit}
+                  className="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white text-sm font-semibold rounded-lg transition-colors"
+                >
+                  End Game
+                </button>
+              )}
               <button
                 onClick={winner ? handleForfeit : handleForfeit}
                 className="text-gray-400 hover:text-white transition-colors"
@@ -176,18 +181,6 @@ export default function TicTacToeGame({ gameState, players, currentUserId, onMov
               }
             `}</style>
           </div>
-
-          {/* Footer */}
-          {!winner && (
-            <div className="p-6 border-t border-gray-700 flex justify-end">
-              <button
-                onClick={handleForfeit}
-                className="px-6 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors"
-              >
-                End Game
-              </button>
-            </div>
-          )}
         </div>
       </div>
 

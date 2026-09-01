@@ -96,7 +96,7 @@ export const RULES = {
     ],
   },
   basketball: {
-    title: 'Basketball H.O.R.S.E',
+    title: 'Basketball Shootout',
     rules: [
       'On a free shot, pick a distance (Layup to Three-Pointer), then hold the shoot button to charge power and release — the timing controls your accuracy.',
       'Sink a free shot and everyone else must attempt to match it from the exact same distance — you don\'t get to choose theirs, only your own power/timing.',
@@ -310,14 +310,28 @@ export const RULES = {
       'First load can take a moment — the course assets download once and are cached after that.',
     ],
   },
+  teeworlds: {
+    title: 'Teeworlds',
+    rules: [
+      'Real 2D multiplayer shooter — every player who joins battles it out together in the same live match.',
+      'Move: A / D or Left / Right arrows. Jump: Space.',
+      'Fire your weapon: left click. Fire your grappling hook (swing around the map): right click.',
+      'Switch weapons with 1-5 or the mouse wheel.',
+      'First load can take a moment — the game assets download once and are cached after that.',
+    ],
+  },
   tank_battle: {
     title: 'Tank Battle',
     rules: [
-      'Real-time, no turns — both players move and fire simultaneously the whole match.',
+      'Real-time free-for-all, 2-8 tanks, no turns — everyone moves and fires simultaneously the whole match.',
       'WASD or arrow keys to drive; your turret always aims toward your mouse cursor (drag a virtual joystick + tap FIRE on mobile).',
       'Click, or press Space, to fire — each hit deals 20 damage, starting from 100 HP.',
-      'The first tank reduced to 0 HP loses the battle!',
-      'A 3-2-1 countdown starts every match so neither player gets a head start.',
+      'Tanks gently bump apart on contact — you can\'t be trapped or blocked in.',
+      'Destructible walls block movement and shots — drive behind one for cover, or shoot through it (3 hits to break).',
+      'Up to 3 power-ups can be live at once: 💚 Health (+30 HP), ⚡ Speed boost, 🛡️ Shield (reduces incoming damage), 🔥 Rapid Fire, or ⭐ Power Shot (your next hit deals double damage).',
+      'A tank reduced to 0 HP is eliminated and drops into spectator view — the battle keeps going without it.',
+      'Last tank standing wins! Use the +/- buttons (top right) to zoom out and see more of the battlefield.',
+      'A 3-2-1 countdown starts every match so nobody gets a head start.',
     ],
   },
   bomberman: {
@@ -330,6 +344,8 @@ export const RULES = {
       'Walls come in 3 tiers — wooden (1 hit), concrete (2 hits), iron (3 hits) — each one blocks the blast and needs that many separate hits before it\'s actually destroyed.',
       'Blasts chain: if your explosion reaches another live bomb (yours or an opponent\'s), it forces that bomb to go off too — a bomb never blocks a blast, so a cascade can ripple through several at once.',
       'You can have up to 3 bombs out at a time — cluster them for a bigger combined chain reaction.',
+      'Face a destructible wall and press F (or tap 📦 on mobile) to pick it up and carry it around — carrying slows you down, but you can drop it (F again) anywhere clear to build cover or block a chokepoint on the fly.',
+      'Breaking a wall sometimes drops a power-up on that tile — grab it by walking over it. 💥 boosts your blast radius, 💣 lets you place an extra bomb at once, ⚡ speeds you up, and 👢 lets you kick a bomb (face it and press F/📦) to send it sliding until it hits something.',
       'The last player standing wins — if a blast eliminates everyone remaining at once, it\'s a draw.',
     ],
   },

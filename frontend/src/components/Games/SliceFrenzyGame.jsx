@@ -508,7 +508,13 @@ export default function SliceFrenzyGame({ onClose, onEndGame, isHost, hotSeatTou
   const isInTournament = !!hotSeatTournament;
   const isMyTurn = hotSeatTournament?.current_player_id === currentUserId;
   const myEntry = hotSeatTournament?.participants?.find((p) => p.user_id === currentUserId);
-  const alreadyScored = isInTournament && myEntry && myEntry.score != null;
+  // Same fix as SkeeballGame.jsx (identical copy-pasted bug, confirmed via
+  // a real "game never starts, shows already-played immediately" report):
+  // HotSeatParticipant.Score is a plain Go int, always serialized as a real
+  // 0 from tournament creation — never null — so `score != null` was always
+  // true for every participant before anyone had played. `played` is the
+  // real boolean the backend already tracks for exactly this.
+  const alreadyScored = isInTournament && !!myEntry?.played;
   const eliminated = isInTournament && !!myEntry?.eliminated;
 
   const shouldPlay = isHost && (!isInTournament || isMyTurn) && !alreadyScored;
@@ -699,6 +705,9 @@ export default function SliceFrenzyGame({ onClose, onEndGame, isHost, hotSeatTou
             </>
           )}
           <GameRulesButton gameType="slice_frenzy" />
+          <button onClick={handleForfeit} className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold">
+            {isInTournament ? 'End Game' : 'Close'}
+          </button>
           <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={isInTournament ? 'End for everyone' : 'Close'}>
             <X className="w-5 h-5" />
           </button>

@@ -43,7 +43,7 @@ function playHitSound(hit, enabled) {
   }
 }
 
-export default function DartsGame({ gameState, players = [], currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function DartsGame({ gameState, players = [], currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const sceneRef = useRef(null);
 
   const gs = gameState?.game_state || {};
@@ -136,6 +136,11 @@ export default function DartsGame({ gameState, players = [], currentUserId, onMo
             </div>
             <div className="flex items-center gap-2">
               <GameRulesButton gameType="darts" />
+              {!isOver && (
+                <button onClick={handleForfeit} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
+                  Forfeit
+                </button>
+              )}
               <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'Forfeit'}>
                 <X className="w-6 h-6" />
               </button>
@@ -179,14 +184,6 @@ export default function DartsGame({ gameState, players = [], currentUserId, onMo
           {!isMyTurn && !isOver && isPlayer && (
             <div className="px-5 pb-4 text-center text-gray-500 text-xs shrink-0">Waiting for your turn…</div>
           )}
-
-          {!isOver && (
-            <div className="flex justify-end px-5 pb-4 shrink-0">
-              <button onClick={handleForfeit} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
-                Forfeit
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
@@ -199,6 +196,7 @@ export default function DartsGame({ gameState, players = [], currentUserId, onMo
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
     </>

@@ -59,7 +59,7 @@ function StatusLabel({ status }) {
   );
 }
 
-export default function BlackjackGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function BlackjackGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const gs = gameState?.game_state || {};
   const phase = gs.phase || 'player_turns';
   const playerHands = gs.player_hands || {};
@@ -115,6 +115,14 @@ export default function BlackjackGame({ gameState, players, currentUserId, onMov
         </div>
         <div className="flex items-center gap-2">
           <GameRulesButton gameType="blackjack" className="text-gray-300 hover:text-white" />
+          {isHostUser && !finished && (
+            <button
+              onClick={onEndGame}
+              className="px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-400 rounded-xl text-sm font-semibold transition-colors"
+            >
+              End Game
+            </button>
+          )}
           <button
             onClick={endOrLeave}
             className="text-gray-300 hover:text-white hover:bg-green-800/60 p-1.5 rounded-lg transition-colors"
@@ -228,17 +236,6 @@ export default function BlackjackGame({ gameState, players, currentUserId, onMov
         )}
       </div>
 
-      {/* Footer — End Game only; the finished/Close state is now owned by GameWinnerBanner */}
-      {isHostUser && !finished && (
-        <div className="px-5 py-3 border-t border-green-800/60 flex justify-between flex-shrink-0">
-          <button
-            onClick={onEndGame}
-            className="px-4 py-2 bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-400 rounded-xl text-sm font-semibold transition-colors"
-          >
-            End Game
-          </button>
-        </div>
-      )}
     </div>
 
     {finished && (
@@ -250,6 +247,7 @@ export default function BlackjackGame({ gameState, players, currentUserId, onMov
         isForfeit={gameState?.status === 'forfeited'}
         onClose={onClose}
         onPostResult={onPostResult}
+        secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
       />
     )}
     </>

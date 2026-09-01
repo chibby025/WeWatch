@@ -89,7 +89,7 @@ function RackTile({ tile, selected, onClick, disabled }) {
   );
 }
 
-export default function WordsmithGame({ gameState, players, currentUserId, myHand, onMove, onClose, onEndGame, onPostResult, gameErrorMsg, gameErrorKey }) {
+export default function WordsmithGame({ gameState, players, currentUserId, myHand, onMove, onClose, onEndGame, onPostResult, gameErrorMsg, gameErrorKey, onPlayAgain }) {
   const gs = gameState?.game_state || {};
   const board = gs.board || [];
   const scores = gs.scores || {};
@@ -285,6 +285,7 @@ export default function WordsmithGame({ gameState, players, currentUserId, myHan
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
 

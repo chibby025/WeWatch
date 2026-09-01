@@ -167,7 +167,7 @@ function playArrowHitSound(hit, enabled) {
   }
 }
 
-export default function ArcheryGame({ gameState, players = [], currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function ArcheryGame({ gameState, players = [], currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const mountRef = useRef(null);
   const arrowGroupRef = useRef(null);
   const arrowAssetsRef = useRef(null);
@@ -523,6 +523,11 @@ export default function ArcheryGame({ gameState, players = [], currentUserId, on
                 {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
               </button>
               <GameRulesButton gameType="archery" />
+              {!isOver && (
+                <button onClick={handleForfeit} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
+                  Forfeit
+                </button>
+              )}
               <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'Forfeit'}>
                 <X className="w-6 h-6" />
               </button>
@@ -591,14 +596,6 @@ export default function ArcheryGame({ gameState, players = [], currentUserId, on
           {!isMyTurn && !isOver && isPlayer && (
             <div className="px-5 pb-4 text-center text-gray-500 text-xs shrink-0">Waiting for your turn…</div>
           )}
-
-          {!isOver && (
-            <div className="flex justify-end px-5 pb-4 shrink-0">
-              <button onClick={handleForfeit} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
-                Forfeit
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
@@ -611,6 +608,7 @@ export default function ArcheryGame({ gameState, players = [], currentUserId, on
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
     </>

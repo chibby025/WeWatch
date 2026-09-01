@@ -222,7 +222,7 @@ function RebusPatternDisplay({ pattern }) {
 
 const GUESS_STUCK_TIMEOUT_MS = 6000;
 
-export default function RebusRoundGame({ gameState, currentUserId, onMove, onClose, onPostResult, gameErrorMsg, gameErrorKey }) {
+export default function RebusRoundGame({ gameState, currentUserId, onMove, onClose, onPostResult, gameErrorMsg, gameErrorKey, onPlayAgain }) {
   const [guess, setGuess] = useState('');
   const [timeLeft, setTimeLeft] = useState(PUZZLE_SECONDS);
   const [isSendingNext, setIsSendingNext] = useState(false);
@@ -453,6 +453,12 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
         </div>
         <div className="flex items-center gap-1">
           <GameRulesButton gameType="rebus_round" />
+          <button
+            onClick={endOrLeave}
+            className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-colors"
+          >
+            {isHostUser ? 'End Game' : 'Leave'}
+          </button>
           <button
             onClick={endOrLeave}
             className="text-gray-400 hover:text-white hover:bg-gray-800 p-1.5 rounded-lg transition-colors"
@@ -695,6 +701,7 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
     </div>

@@ -207,7 +207,7 @@ function TrapIcon() {
 
 const BOARD_CP = 10; // percent per cell (100 / 10)
 
-export default function SnakesAndLaddersGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function SnakesAndLaddersGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const [positions, setPositions] = useState([]);               // authoritative, from server
   const [displayPositions, setDisplayPositions] = useState([]); // what's actually rendered (animated)
   const [skipNext, setSkipNext] = useState([]);                 // per-player "will miss next turn" flags
@@ -622,6 +622,7 @@ export default function SnakesAndLaddersGame({ gameState, players, currentUserId
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
     </>

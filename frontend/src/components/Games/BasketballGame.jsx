@@ -8,7 +8,7 @@
 // job is capturing the shooter's chosen distance (their live court position)
 // and a continuous power value (derived from the engine's own release-
 // timing accuracy) and replaying whatever the server decides.
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { X, Volume2, VolumeX } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
@@ -64,20 +64,80 @@ function releaseKey(code) { window.dispatchEvent(new KeyboardEvent('keyup', { co
 
 const isTouchDevice = () => (typeof window !== 'undefined') && ('ontouchstart' in window) && navigator.maxTouchPoints > 0;
 
-// Live shot relay — mirrors BowlingGame.jsx's own throw_progress mechanism
-// (same ~10Hz cadence, same "sender never renders it, only the receiving
-// spectator's stale-check matters" shape), scaled down since basketball has
-// no parallel spectator 3D scene to drive — just enough to answer "not
-// broadcast in real time when clicked": a spectator now sees the actual
-// shot arc rise and fall live, not just a static waiting screen until the
-// server's result lands a beat later.
+// Live shot relay — a real 3D mirror now (see isMyTurnRef's own comment
+// further down for the full architecture): the shooter's device sends
+// continuous player position + in-flight ball position, which every other
+// connected device uses to directly drive the SAME shared court/ball/player
+// meshes, dead-reckoning-extrapolated between packets.
 const PROGRESS_SEND_EVERY_FRAMES = 6; // ~10Hz @ 60fps
-const RELAY_STALE_MS = 700; // a bit more forgiving than a fixed-cadence 3D relay — this is a coarse height cue, not physics
-const RELAY_HEIGHT_MAX = 5; // meters — normalizes Ball.pos.y into a 0-100% vertical position for the CSS indicator below
-const SHOT_SETTLE_GRACE_MS = 900; // let the ball's landing / result label read for a beat before letting go
-const SHOT_HOLD_SAFETY_CAP_MS = 6000; // backstop only — in case ball.state never leaves 'shot' for some reason
 
-export default function BasketballGame({ gameState, players = [], currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+// ── Cached engine, module-scope ─────────────────────────────────────────
+// buildEnvironment()/new WWGame() procedurally construct a whole stadium's
+// worth of geometry + canvas-drawn textures (skyline, bleachers, fences,
+// signs, court markings, backboard, ball skins, jersey numbers) every time
+// they're called — real, synchronous, main-thread CPU work with no network
+// I/O involved at all (confirmed: no GLTFLoader/TextureLoader anywhere in
+// this engine, only THREE.CanvasTexture + primitive geometries). Every
+// player in a H.O.R.S.E. match sees the identical set — the court/hoop/
+// stadium never change shot to shot — so redoing that work from scratch on
+// every single turn (which the old isMyTurn-gated effect did, since it
+// fully disposed the renderer and nulled everything on every teardown) was
+// pure waste, felt like "reloading the same asset" on every shot.
+//
+// True cross-DEVICE sharing isn't possible (each browser is an independent
+// process/GPU context — there's no way to hand another user's tab a
+// pre-built WebGL scene) — what IS achievable, and what this actually
+// fixes, is per-device reuse: build it once per browser tab for the whole
+// life of this match, then just reattach the same renderer's canvas + WWGame
+// instance on every subsequent turn instead of rebuilding. WWGame's own
+// state machine already anticipates this — it has a built-in "retrieve the
+// loose ball" cycle for handling consecutive shots (see wwGame.js's
+// _retrieveTimer) — so reusing one instance across turns exercises exactly
+// the lifecycle the engine already expects, not a workaround.
+let cachedBasketballEngine = null; // { scene, renderer, camera, wwGame, cameraRig }
+
+function buildBasketballEngine(mount) {
+  const scene = new THREE.Scene();
+  const width = mount.clientWidth || 1, height = mount.clientHeight || 1;
+  const camera = new THREE.PerspectiveCamera(46, width / height, 0.1, 100);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(width, height);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+
+  buildEnvironment(scene, renderer);
+
+  const wwGame = new WWGame(scene, {});
+  const cameraRig = new CameraRig(camera);
+  wwGame.cameraRig = cameraRig;
+
+  return { scene, renderer, camera, wwGame, cameraRig };
+}
+
+// Only called on a genuine full unmount of this component (leaving the
+// game entirely), never on an ordinary turn-to-turn teardown — see the
+// dedicated cleanup effect below.
+function disposeBasketballEngine() {
+  if (!cachedBasketballEngine) return;
+  const { renderer, scene } = cachedBasketballEngine;
+  scene.traverse((obj) => {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach((m) => {
+        Object.values(m).forEach((v) => { if (v && v.isTexture) v.dispose(); });
+        m.dispose();
+      });
+    }
+  });
+  renderer.dispose();
+  if (typeof window !== 'undefined' && window.__wwBasketballGame === cachedBasketballEngine.wwGame) {
+    delete window.__wwBasketballGame;
+  }
+  cachedBasketballEngine = null;
+}
+
+export default function BasketballGame({ gameState, players = [], currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const mountRef = useRef(null);
   const wwGameRef = useRef(null);
   const soundEnabledRef = useRef(true);
@@ -103,23 +163,6 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
   const setDistance = gs.set_distance ?? 0;
   const lastResult = gs.last_result;
 
-  // Spectator-side live relay indicator — see PROGRESS_SEND_EVERY_FRAMES's
-  // own comment above for the full "why" (answers the "not broadcast in
-  // real time" report). Plain useState + a staleness timeout is enough here
-  // (no rAF loop needed, unlike BowlingGame.jsx's full 3D relay scene) —
-  // this only ever drives one CSS transform on a small 2D indicator.
-  const [relayHeightPct, setRelayHeightPct] = useState(null);
-  const relayStaleTimerRef = useRef(null);
-  useEffect(() => {
-    const ball = gs.shoot_progress?.ball;
-    if (!ball) return;
-    const pct = Math.max(0, Math.min(100, (ball.y / RELAY_HEIGHT_MAX) * 100));
-    setRelayHeightPct(pct);
-    if (relayStaleTimerRef.current) clearTimeout(relayStaleTimerRef.current);
-    relayStaleTimerRef.current = setTimeout(() => setRelayHeightPct(null), RELAY_STALE_MS);
-  }, [gs.shoot_progress]);
-  useEffect(() => () => { if (relayStaleTimerRef.current) clearTimeout(relayStaleTimerRef.current); }, []);
-
   const currentTurn = gameState?.current_turn ?? 0;
   const currentPlayer = players[currentTurn];
   const isMyTurn = currentPlayer?.user_id === currentUserId;
@@ -127,133 +170,256 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
   const winner = gameState?.winner_id ? players.find((p) => p.user_id === gameState.winner_id) : null;
   const isOver = ['finished', 'forfeited', 'completed'].includes(gameState?.status);
 
-  // ── Keep the scene mounted through a shot's release/arc/net animation ──
-  // The engine deliberately PAUSES a shooter's release at the top of their
-  // motion (see player.js's WeWatch bridge block) until resolveServerShot()
-  // is called — which only happens once game_state_update delivers
-  // last_result, in the very same broadcast that also flips isMyTurn to
-  // false (turn passes) or isOver to true (game-ending shot). Tearing the
-  // scene down on that same commit — which the old `!isMyTurn || isOver`
-  // gate below did — killed the RAF loop before the now-just-unblocked
-  // release/arc/rim-or-net animation had any chance to actually play.
+  // ── Real live 3D mirror for every connected player, not just the current
+  // shooter ─────────────────────────────────────────────────────────────
+  // Confirmed via real 2-account testing that the old design (canvas only
+  // shown to whoever's turn it was; everyone else saw a static "X is
+  // shooting…" placeholder) left a spectator seeing essentially nothing.
+  // The fix: the canvas is now mounted for EVERY player for the whole match
+  // (see showCanvasScene below — no longer gated on isMyTurn at all), and
+  // this ALSO solves the separate "loads for the first player" complaint as
+  // a side effect — every device now builds the (procedurally generated,
+  // no network assets) cachedBasketballEngine once, right when the game
+  // starts, instead of only the first time it becomes that device's turn.
   //
-  // `holdSceneOpen` is flagged the instant OUR new result appears, via a
-  // direct state adjustment during render (not inside a useEffect) — React
-  // re-renders with the corrected value before any effect ever runs, so
-  // there's no cross-effect ordering/race to get wrong here (a plain
-  // useState set from a sibling effect would NOT be visible to another
-  // effect in that same commit, since each effect's closure is captured at
-  // render time).
-  const [holdSceneOpen, setHoldSceneOpen] = useState(false);
-  const lastResultKeyForHoldRef = useRef(null);
-  if (lastResult?.made != null && lastResult.shooter_id === currentUserId) {
-    const holdKey = `${lastResult.shooter_id}-${lastResult.distance}-${lastResult.power}-${lastResult.made}`;
-    if (lastResultKeyForHoldRef.current !== holdKey) {
-      lastResultKeyForHoldRef.current = holdKey;
-      if (!holdSceneOpen) setHoldSceneOpen(true);
-    }
-  }
-  // Safety-cap backstop only — the real close trigger lives inside the RAF
-  // loop below (fires once ball.state genuinely leaves 'shot', i.e. the
-  // ball has actually landed), this just guarantees the scene can never get
-  // stuck mounted forever if that never happens for some reason.
+  // The shooter's own device still runs the real local wwGame.update(dt)
+  // physics/input loop exactly as before. A NON-shooting device instead
+  // renders the SAME shared court/ball/player meshes, but positions them
+  // directly from the shooter's own relayed shoot_progress data (dead-
+  // reckoning extrapolated between packets — same technique already proven
+  // in TankBattleGame.jsx/BombermanGame.jsx) — never running its own
+  // physics, so there's no risk of the two devices' simulations diverging.
+  const isMyTurnRef = useRef(isMyTurn);
+  isMyTurnRef.current = isMyTurn;
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
+
+  // Extrapolation anchors for a SPECTATING device — velocity estimated from
+  // consecutive shoot_progress samples, same secant technique already used
+  // by BowlingGame.jsx's own relay-smoothing fix. `player` updates
+  // continuously for the whole duration of the shooter's turn (dribbling,
+  // positioning); `ball` is only ever present while the shot is actually
+  // airborne, and is cleared (active:false) the moment a tick arrives with
+  // no ball data — meaning "the shot has resolved, stop extrapolating a
+  // stale flight."
+  const playerAnchorRef = useRef({ x: 0, y: 0, z: 0, facing: 0, vx: 0, vy: 0, vz: 0, t: 0, valid: false });
+  const ballAnchorRef = useRef({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, t: 0, active: false });
+  const prevProgressSampleRef = useRef({ player: null, ball: null, t: 0 });
   useEffect(() => {
-    if (!holdSceneOpen) return undefined;
-    const t = setTimeout(() => setHoldSceneOpen(false), SHOT_HOLD_SAFETY_CAP_MS);
-    return () => clearTimeout(t);
-  }, [holdSceneOpen]);
+    const progress = gs.shoot_progress;
+    if (!progress) return;
+    const now = Date.now();
+    const prev = prevProgressSampleRef.current;
+    const dtSec = Math.max((now - (prev.t || now)) / 1000, 1 / 90);
+    if (progress.player) {
+      const p = progress.player;
+      const prevP = prev.player;
+      playerAnchorRef.current = {
+        x: p.x, y: p.y ?? 0, z: p.z,
+        facing: typeof p.facing === 'number' ? p.facing : playerAnchorRef.current.facing,
+        vx: prevP ? (p.x - prevP.x) / dtSec : 0,
+        vy: prevP ? ((p.y ?? 0) - (prevP.y ?? 0)) / dtSec : 0,
+        vz: prevP ? (p.z - prevP.z) / dtSec : 0,
+        t: now, valid: true,
+      };
+    }
+    if (progress.ball) {
+      const b = progress.ball;
+      const prevB = prev.ball;
+      ballAnchorRef.current = {
+        x: b.x, y: b.y, z: b.z,
+        vx: prevB ? (b.x - prevB.x) / dtSec : 0,
+        vy: prevB ? (b.y - prevB.y) / dtSec : 0,
+        vz: prevB ? (b.z - prevB.z) / dtSec : 0,
+        t: now, active: true,
+      };
+    } else {
+      ballAnchorRef.current = { ...ballAnchorRef.current, active: false };
+    }
+    prevProgressSampleRef.current = { player: progress.player || prev.player, ball: progress.ball || null, t: now };
+  }, [gs.shoot_progress]);
 
-  const showCanvasScene = holdSceneOpen || (isMyTurn && !isOver);
+  // Always mounted for the whole match, for every connected player — the
+  // old per-turn show/hide (and its "keep it open a beat after MY release
+  // so the animation can finish" holdSceneOpen mechanism) is no longer
+  // needed once the canvas never actually unmounts between turns at all.
+  const showCanvasScene = !isOver;
+  // True only while the very first (uncached) build of this page session is
+  // actually running — every later turn reattaches the cached engine
+  // instantly, so this only ever shows once per match, not once per shot.
+  const [engineLoading, setEngineLoading] = useState(false);
 
-  const handleShootAttempt = useCallback(({ distance, power }) => {
-    onMove({ move_type: 'shoot', distance, power });
-  }, [onMove]);
-
-  // ── Three.js scene + WWGame setup — rebuilt whenever it becomes this
-  // player's own turn (mirrors BowlingGame.jsx's identical "only the active
-  // thrower's device runs the engine" lifecycle), and now also kept mounted
-  // through showCanvasScene's hold window so a just-released shot's
-  // animation can finish (see above). ───────────────────────────────────
+  // ── Three.js scene + WWGame attach/detach — reuses cachedBasketballEngine
+  // (built once) for the WHOLE match, for EVERY connected player — see the
+  // big comment above isMyTurnRef for the full rationale. Deps are now just
+  // [isOver]: the scene mounts once when the game starts and only tears
+  // down when it ends (or this component unmounts), never per-turn.
   useEffect(() => {
     if (!showCanvasScene) return undefined;
     const mount = mountRef.current;
     if (!mount) return undefined;
-
-    const scene = new THREE.Scene();
-    const width = mount.clientWidth || 1, height = mount.clientHeight || 1;
-    const camera = new THREE.PerspectiveCamera(46, width / height, 0.1, 100);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.shadowMap.enabled = true;
-    mount.appendChild(renderer.domElement);
-
-    buildEnvironment(scene, renderer);
-
-    const wwGame = new WWGame(scene, {
-      onShootAttempt: handleShootAttempt,
-      onShotMeterUpdate: setMeter,
-    });
-    wwGame.cameraRig = new CameraRig(camera);
-    wwGameRef.current = wwGame;
-
+    let cancelled = false;
     let raf;
-    let progressFrameCount = 0;
-    let sawShotState = false;
-    let closeTimer = null;
-    const clock = new THREE.Clock();
-    const animate = () => {
-      raf = requestAnimationFrame(animate);
-      const dt = Math.min(clock.getDelta(), 0.05);
-      wwGame.update(dt);
-      renderer.render(scene, camera);
+    let resizeHandler;
 
-      // Live relay: only while the ball is actually airborne after a real
-      // release (Ball.state === 'shot' — set by Ball.shoot()/shootDunk() in
-      // ball.js). Never fires for a held/dribbled ball, so a spectator's
-      // indicator only ever appears for the part of the action that's
-      // actually a "shot" — matching what the placeholder text already says.
-      if (wwGame.ball?.state === 'shot') {
-        progressFrameCount += 1;
-        if (progressFrameCount >= PROGRESS_SEND_EVERY_FRAMES) {
+    const runLoop = (engine) => {
+      const { scene, renderer, camera, wwGame } = engine;
+      wwGame.onShootAttempt = (payload) => onMoveRef.current({ move_type: 'shoot', ...payload });
+      wwGame.onShotMeterUpdate = setMeter;
+      wwGameRef.current = wwGame;
+
+      resizeHandler = () => {
+        const w = mount.clientWidth || 1, h = mount.clientHeight || 1;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      };
+      resizeHandler(); // correct sizing immediately on (re)attach — the mount container may differ in size from whenever this engine was first built
+      window.addEventListener('resize', resizeHandler);
+
+      let progressFrameCount = 0;
+      let wasAirborne = false; // edge-detect ONLY the held->shot transition
+      const EXTRAP_CAP_S = 0.25; // dead-reckoning cap — same order of magnitude already proven in TankBattle/Bomberman
+      const clock = new THREE.Clock();
+      const animate = () => {
+        raf = requestAnimationFrame(animate);
+        const dt = Math.min(clock.getDelta(), 0.05);
+
+        if (isMyTurnRef.current) {
+          // ── Active shooter: real local physics, exactly as before ──
+          wwGame.update(dt);
+
+          // Continuous relay for the WHOLE turn (not just mid-shot) — a
+          // spectator now needs to see the shooter move/dribble around the
+          // court too, not just the ball during flight. `player` is always
+          // included; `ball` only while genuinely airborne. The very first
+          // frame of a NEW "shot" state always sends immediately, bypassing
+          // the throttle — confirmed via real testing that this engine
+          // pauses a shot's visual release until the server's result comes
+          // back, then plays the whole flight out quickly enough that the
+          // old throttle-only gate could miss it entirely for a fast shot.
+          const isAirborne = wwGame.ball?.state === 'shot';
+          const justLaunched = isAirborne && !wasAirborne;
+          progressFrameCount += 1;
+          if (justLaunched || progressFrameCount >= PROGRESS_SEND_EVERY_FRAMES) {
+            progressFrameCount = 0;
+            const payload = {};
+            if (wwGame.userPlayer) {
+              payload.player = {
+                x: wwGame.userPlayer.pos.x, y: wwGame.userPlayer.y || 0, z: wwGame.userPlayer.pos.z,
+                facing: wwGame.userPlayer.facing,
+              };
+            }
+            if (isAirborne && wwGame.ball) {
+              payload.ball = { x: wwGame.ball.pos.x, y: wwGame.ball.pos.y, z: wwGame.ball.pos.z };
+            }
+            if (payload.player || payload.ball) onMoveRef.current({ move_type: 'shoot_progress', ...payload });
+          }
+          wasAirborne = isAirborne;
+        } else {
+          // ── Spectating: never run local physics (would diverge from the
+          // shooter's own authoritative result — the exact "each plays
+          // independently" bug already reported once). Instead, directly
+          // position the SAME shared meshes from the shooter's relayed,
+          // dead-reckoning-extrapolated state.
           progressFrameCount = 0;
-          const p = wwGame.ball.pos;
-          onMove({ move_type: 'shoot_progress', ball: { x: p.x, y: p.y, z: p.z } });
+          wasAirborne = false;
+          const nowMs = Date.now();
+          const anchorP = playerAnchorRef.current;
+          const anchorB = ballAnchorRef.current;
+          if (anchorP.valid && wwGame.userPlayer?.rig?.group) {
+            const el = Math.min(Math.max((nowMs - anchorP.t) / 1000, 0), EXTRAP_CAP_S);
+            const ex = anchorP.x + anchorP.vx * el;
+            const ey = anchorP.y + anchorP.vy * el;
+            const ez = anchorP.z + anchorP.vz * el;
+            wwGame.userPlayer.pos.set(ex, 0, ez);
+            wwGame.userPlayer.y = ey;
+            wwGame.userPlayer.facing = anchorP.facing;
+            wwGame.userPlayer.rig.group.position.set(ex, ey, ez);
+            wwGame.userPlayer.rig.group.rotation.y = anchorP.facing;
+          }
+          if (wwGame.ball) {
+            if (anchorB.active) {
+              const el = Math.min(Math.max((nowMs - anchorB.t) / 1000, 0), EXTRAP_CAP_S);
+              const ex = anchorB.x + anchorB.vx * el;
+              const ey = anchorB.y + anchorB.vy * el;
+              const ez = anchorB.z + anchorB.vz * el;
+              wwGame.ball.pos.set(ex, ey, ez);
+              wwGame.ball.mesh.position.set(ex, ey, ez);
+            } else if (anchorP.valid) {
+              // Not airborne — approximate "held in the shooter's hands"
+              // rather than leaving the ball frozen at its last flight
+              // position. A simplification, not a physically exact hand
+              // attachment (that's the real local physics' own job, and
+              // only runs on the shooter's own device).
+              wwGame.ball.pos.set(anchorP.x, anchorP.y + 1.0, anchorP.z);
+              wwGame.ball.mesh.position.copy(wwGame.ball.pos);
+            }
+          }
         }
-        sawShotState = true;
-      } else {
-        progressFrameCount = 0;
-        // The shot has fully played out — ball.js only leaves 'shot' once
-        // the ball actually lands (rim miss bouncing to the floor, or a
-        // make falling through the net and landing) — see ball.js's floor
-        // -bounce branch. Let go of the hold a beat later so the result
-        // has a moment to read; a no-op if isMyTurn alone already keeps
-        // the scene open (shooter made it and gets to keep shooting).
-        if (sawShotState && !closeTimer) {
-          closeTimer = setTimeout(() => setHoldSceneOpen(false), SHOT_SETTLE_GRACE_MS);
-        }
-      }
-    };
-    animate();
 
-    const handleResize = () => {
-      const w = mount.clientWidth || 1, h = mount.clientHeight || 1;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
+        renderer.render(scene, camera);
+      };
+      animate();
     };
-    window.addEventListener('resize', handleResize);
+
+    if (cachedBasketballEngine) {
+      mount.appendChild(cachedBasketballEngine.renderer.domElement);
+      runLoop(cachedBasketballEngine);
+    } else {
+      // First-ever build this match. Flip the loading flag now, but defer
+      // the actual (synchronous, main-thread-blocking) construction until
+      // AFTER that state update has genuinely been painted to the screen.
+      //
+      // A bare setTimeout(fn, 0) does NOT guarantee this — it only orders
+      // relative to the macrotask queue, not relative to the browser's own
+      // paint cycle, so React's setEngineLoading(true) and the heavy build
+      // work could both complete within the same tick with zero paint in
+      // between, meaning the spinner would never actually become visible
+      // (confirmed as the real cause of "no loading animation shows" — the
+      // fix is the standard "wait two animation frames" idiom: the first
+      // rAF fires just before the browser's next paint (which will include
+      // the spinner, since React's state update has already committed a
+      // new DOM by then); a paint happens between that callback returning
+      // and the second rAF firing, so by the time the second one runs, the
+      // spinner is guaranteed to have actually been drawn on screen).
+      setEngineLoading(true);
+      let rafId1 = null;
+      let rafId2 = null;
+      rafId1 = requestAnimationFrame(() => {
+        rafId2 = requestAnimationFrame(() => {
+          if (cancelled) return;
+          const engine = buildBasketballEngine(mount);
+          cachedBasketballEngine = engine;
+          mount.appendChild(engine.renderer.domElement);
+          setEngineLoading(false);
+          runLoop(engine);
+        });
+      });
+      return () => {
+        cancelled = true;
+        if (rafId1 != null) cancelAnimationFrame(rafId1);
+        if (rafId2 != null) cancelAnimationFrame(rafId2);
+        setEngineLoading(false);
+      };
+    }
 
     return () => {
+      cancelled = true;
       cancelAnimationFrame(raf);
-      if (closeTimer) clearTimeout(closeTimer);
-      window.removeEventListener('resize', handleResize);
-      renderer.dispose();
-      if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
-      wwGameRef.current = null;
+      if (resizeHandler) window.removeEventListener('resize', resizeHandler);
+      // Detach only — the cached engine itself (renderer/scene/wwGame)
+      // persists in module scope for the next turn to reattach. Real
+      // disposal only happens on a genuine full unmount, see below.
+      if (cachedBasketballEngine && mount.contains(cachedBasketballEngine.renderer.domElement)) {
+        mount.removeChild(cachedBasketballEngine.renderer.domElement);
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showCanvasScene]);
+
+  // True disposal — only on leaving the game entirely (component unmount),
+  // never on an ordinary turn-to-turn teardown handled above.
+  useEffect(() => () => disposeBasketballEngine(), []);
 
   // ── Deliver the server's confirmed result to the engine the instant it
   // broadcasts, regardless of whose local UI triggered it — every connected
@@ -293,7 +459,7 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
         <div className="relative bg-gray-900 rounded-2xl shadow-2xl w-full max-w-3xl mx-4 overflow-hidden flex flex-col" style={{ maxHeight: '92vh' }}>
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800 shrink-0">
             <div>
-              <h2 className="text-white text-xl font-bold">Basketball — H.O.R.S.E 🏀</h2>
+              <h2 className="text-white text-xl font-bold">Basketball Shootout 🏀</h2>
               <p className="text-gray-400 text-sm">
                 {hasPendingShot ? `Match the shot — ${Math.round(setDistance * 100)}% to the arc` : 'Free shot — pick your spot'}
               </p>
@@ -307,6 +473,11 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
                 {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
               </button>
               <GameRulesButton gameType="basketball" />
+              {!isOver && (
+                <button onClick={handleForfeit} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
+                  End Game
+                </button>
+              )}
               <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'End Game'}>
                 <X className="w-6 h-6" />
               </button>
@@ -324,6 +495,13 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
                     isElim ? 'bg-gray-800/30 opacity-50' : currentPlayer?.user_id === p.user_id ? 'bg-purple-900/40 ring-2 ring-purple-500' : 'bg-gray-800/50'
                   }`}
                 >
+                  {p.avatar ? (
+                    <img src={p.avatar} alt={p.username} className="w-5 h-5 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <span className="w-5 h-5 rounded-full bg-gray-700 flex items-center justify-center text-[9px] font-bold text-gray-300 shrink-0">
+                      {p.username?.[0]?.toUpperCase()}
+                    </span>
+                  )}
                   <span className="text-white text-sm font-medium">{p.username}</span>
                   <span className="font-mono text-xs tracking-widest">
                     {HORSE_WORD.split('').map((ch, i) => (
@@ -337,33 +515,35 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
 
           <div className="relative flex-1 min-h-[320px]">
             {showCanvasScene ? (
-              <div ref={mountRef} className="absolute inset-0" />
-            ) : (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-400 overflow-hidden">
-                {relayHeightPct != null ? (
-                  // Live shot in flight — a real, near-real-time rise/fall cue
-                  // rather than a static waiting screen. Deliberately coarse
-                  // (height only, no 3D re-simulation) — this is a spectator
-                  // convenience, not a claim of matching the shooter's exact
-                  // physics; the actual make/miss result still comes from the
-                  // server-authoritative "shoot" move alone.
-                  <div className="relative w-full h-full">
-                    <span
-                      className="absolute left-1/2 text-4xl transition-[bottom] duration-150 ease-linear"
-                      style={{ bottom: `${relayHeightPct}%`, transform: 'translateX(-50%)' }}
-                    >
-                      🏀
-                    </span>
-                    <p className="absolute bottom-3 left-1/2 -translate-x-1/2 text-sm whitespace-nowrap">
-                      {currentPlayer?.username || 'Opponent'}&apos;s shot is in the air…
-                    </p>
+              <>
+                {/* Now mounted for EVERY connected player for the whole
+                    match, not just whoever's turn it is — see the big
+                    comment above isMyTurnRef. A non-shooting player sees the
+                    exact same court/ball/player, positioned live from the
+                    shooter's own relayed state, instead of a flat
+                    placeholder. */}
+                <div ref={mountRef} className="absolute inset-0" />
+                {engineLoading && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gray-900">
+                    <div className="relative w-14 h-14">
+                      <span className="absolute inset-0 flex items-center justify-center text-3xl">🏀</span>
+                      <div className="absolute inset-0 rounded-full border-4 border-gray-700 border-t-orange-500 animate-spin" />
+                    </div>
+                    <p className="text-gray-400 text-sm">Setting up the court…</p>
                   </div>
-                ) : (
-                  <>
-                    <span className="text-5xl">🏀</span>
-                    {!isOver && <p className="text-sm">{currentPlayer?.username || 'Opponent'} is shooting…</p>}
-                  </>
                 )}
+                {!isMyTurn && !engineLoading && (
+                  <p className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 text-sm text-white bg-black/60 px-3 py-1 rounded-full whitespace-nowrap pointer-events-none">
+                    {currentPlayer?.avatar && (
+                      <img src={currentPlayer.avatar} alt="" className="w-4 h-4 rounded-full object-cover" />
+                    )}
+                    {currentPlayer?.username || 'Opponent'}&apos;s turn
+                  </p>
+                )}
+              </>
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-400">
+                <span className="text-5xl">🏀</span>
               </div>
             )}
             {lastHitLabel && (
@@ -418,14 +598,6 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
           {!isMyTurn && !isOver && isPlayer && (
             <div className="px-5 pb-4 text-center text-gray-500 text-xs shrink-0">Waiting for your turn…</div>
           )}
-
-          {!isOver && (
-            <div className="flex justify-end px-5 pb-4 shrink-0">
-              <button onClick={handleForfeit} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
-                End Game
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
@@ -438,6 +610,7 @@ export default function BasketballGame({ gameState, players = [], currentUserId,
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
     </>

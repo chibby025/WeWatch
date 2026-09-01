@@ -177,6 +177,11 @@ export default function WouldYouRatherGame({ gameState, players, currentUserId, 
             </div>
             <div className="flex items-center gap-1">
               <GameRulesButton gameType="would_you_rather" />
+              {isHost && !isOver && (
+                <button onClick={onEndGame} className="px-3 py-1 bg-red-800 hover:bg-red-700 text-white rounded-xl font-semibold transition-colors text-sm">
+                  End
+                </button>
+              )}
               <button onClick={isOver ? onClose : (isHost ? onEndGame : onClose)} className="text-gray-400 hover:text-white p-1">
                 <X size={20} />
               </button>
@@ -201,15 +206,10 @@ export default function WouldYouRatherGame({ gameState, players, currentUserId, 
           </div>
 
           {/* Host controls */}
-          {isHost && !isOver && (
+          {isHost && !isOver && phase === 'reveal' && (
             <div className="flex gap-2">
-              {phase === 'reveal' && (
-                <button onClick={next} className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-semibold transition-colors">
-                  Next Question →
-                </button>
-              )}
-              <button onClick={onEndGame} className="px-4 py-2.5 bg-red-800 hover:bg-red-700 text-white rounded-xl font-semibold transition-colors text-sm">
-                End
+              <button onClick={next} className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-semibold transition-colors">
+                Next Question →
               </button>
             </div>
           )}

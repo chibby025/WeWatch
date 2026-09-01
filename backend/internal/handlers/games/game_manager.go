@@ -156,6 +156,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"golf": true,
 		// "micro_racing": true, // temporarily removed
 		"obby_parkour": true,
+		"teeworlds":    true,
 		"rhythm_hero":  true,
 		"dominoes":     true,
 		"darts":        true,
@@ -242,12 +243,15 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 	if gameType == "curling" && len(players) != 2 {
 		return nil, fmt.Errorf("curling is a 2-player game")
 	}
-	// Tank Battle is a genuine 1v1 real-time duel (each client owns and
-	// self-reports its own tank; the shooter is the sole authority on
-	// whether their own bullets land) — no natural way to extend the
-	// symmetric hit-reporting model past exactly two combatants.
-	if gameType == "tank_battle" && len(players) != 2 {
-		return nil, fmt.Errorf("tank_battle is a 2-player game")
+	// Tank Battle is a genuine real-time free-for-all (each client owns and
+	// self-reports its own tank; a shooter is the sole authority on whether
+	// their own bullets land against whichever specific target they hit) —
+	// this generalizes cleanly from 1v1 to N players since nothing about the
+	// symmetric hit-reporting model assumes exactly one opponent. Capped at
+	// 8 to match the fixed spawn-point/arena-size design in
+	// TankBattleGame.jsx.
+	if gameType == "tank_battle" && (len(players) < 2 || len(players) > 8) {
+		return nil, fmt.Errorf("tank_battle supports 2-8 players")
 	}
 	// Bomberman's grid layout has exactly 4 fixed corner spawn points
 	// (bombermanSpawnPoints) — capped there by design, and a real duel needs

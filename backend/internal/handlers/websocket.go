@@ -1087,6 +1087,95 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
     return nil
 }
 
+// BroadcastFreshSessionStatus room-broadcasts a full session_status-shaped
+// message the moment a brand-new watch session is created, so every client
+// already connected to the room (the host included — starting a new session
+// in-place never forces a WS reconnect on its own) picks up the new
+// session's real state immediately. content_rating is the field that
+// actually mattered for the bug this closes: LeftSidebar.jsx derives its
+// icon set purely from sessionStatus.content_rating, but neither
+// session_started (lobby-scoped, minimal payload, never consumed by
+// in-session UI) nor session_ended ever touch sessionStatus — so without
+// this, an already-connected client stays stuck showing whatever the
+// PREVIOUS session in this room had until something else happens to force a
+// reconnect (e.g. a real page reload).
+//
+// Deliberately mirrors JoinWatchSession's own session_status payload shape
+// field-for-field (the same frontend handler, useWebSocket.js, consumes
+// both as a full state replace), but skips the DB member-list query: for a
+// session that is genuinely milliseconds old, an empty members/seating list
+// is the TRUE current state, not a stale approximation — it self-corrects
+// moments later via the exact same JoinWatchSession path once each client's
+// own reconnect/rejoin flow actually runs.
+func (h *Hub) BroadcastFreshSessionStatus(session *models.WatchSession, room *models.Room) {
+    if session == nil || room == nil {
+        return
+    }
+
+    h.subtitleMu.RLock()
+    subtitle := h.subtitleContent[session.RoomID]
+    h.subtitleMu.RUnlock()
+
+    liveG := h.GetLiveGraphics(session.SessionID)
+    getLiveStr := func(field string) string {
+        if liveG == nil {
+            return ""
+        }
+        if v, ok := liveG[field]; ok {
+            if s, ok := v.(string); ok {
+                return s
+            }
+        }
+        return ""
+    }
+
+    data := map[string]interface{}{
+        "session_id":               session.SessionID,
+        "host_id":                  session.HostID,
+        "members":                  []interface{}{},
+        "member_count":             0,
+        "started_at":               session.StartedAt,
+        "seating":                  map[string]interface{}{},
+        "current_media_url":        session.CurrentMediaURL,
+        "current_media_type":       session.CurrentMediaType,
+        "current_playback_time":    session.CurrentPlaybackTime,
+        "playback_time_updated_at": session.PlaybackTimeUpdatedAt,
+        "current_segment_index":    int(session.CurrentPlaybackTime / 2),
+        "current_doc_url":          session.CurrentDocURL,
+        "current_doc_type":         session.CurrentDocType,
+        "current_doc_page":         session.CurrentDocPage,
+        "is_screen_sharing_active": session.IsScreenSharingActive,
+        "sharing_source":           session.SharingSource,
+        "screen_share_host_id":     session.HostID,
+        "session_title":            session.SessionTitle,
+        "poster_url":               session.PosterURL,
+        "is_private":               session.IsPrivate,
+        "content_rating":           session.ContentRating,
+        "is_demo_session":          room.IsAlwaysOn,
+        "custom_background_url":    session.CustomBackgroundURL,
+        "screen_region":            session.ScreenRegion,
+        "watch_type":               session.WatchType,
+        "class_type":               session.ClassType,
+        "current_subtitle":         subtitle,
+        "liveshare_mode":           session.LiveshareMode,
+        "liveshare_layout":         session.LiveShareLayout,
+        "podcast_title":            session.PodcastTitle,
+        "podcast_guest_user_id":    session.PodcastGuestUserID,
+        "liveshare_banner_text":    getLiveStr("banner"),
+        "liveshare_ticker_items":   getLiveStr("ticker"),
+        "liveshare_lower_third":    getLiveStr("lower_third"),
+        "liveshare_logo_bug":       getLiveStr("logo_bug"),
+        "liveshare_break_screen":   getLiveStr("break_screen"),
+        "podcast_logo_url":         getLiveStr("podcast_logo_url"),
+    }
+
+    h.BroadcastJSON(session.RoomID, map[string]interface{}{
+        "type": "session_status",
+        "data": data,
+    })
+    log.Printf("📢 [BroadcastFreshSessionStatus] Room-broadcast fresh session_status for room %d, session %s, content_rating=%s", session.RoomID, session.SessionID, session.ContentRating)
+}
+
 // cleanupClientSync removes a client from all hub state immediately
 // ✅ DEADLOCK FIX: Close send channel FIRST to stop writePump immediately
 func (h *Hub) cleanupClientSync(client *Client) {

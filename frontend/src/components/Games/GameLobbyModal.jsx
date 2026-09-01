@@ -134,6 +134,17 @@ const games = [
     heavy: true
   },
   {
+    id: 'teeworlds',
+    name: 'Teeworlds',
+    description: 'Real retro 2D multiplayer shooter — grab a gun and a grappling hook and battle it out with everyone in the room!',
+    minPlayers: 1,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/v2/teeworlds.webp`,
+    disabled: false,
+    type: 'multiplayer',
+    heavy: true
+  },
+  {
     id: 'fowl_play',
     name: 'Fowl Play',
     description: 'Shoot the ducks before they fly away!',
@@ -306,7 +317,7 @@ const games = [
   },
   {
     id: 'basketball',
-    name: 'Basketball H.O.R.S.E',
+    name: 'Basketball Shootout',
     description: 'Sink a shot and everyone else must match it — miss the match and you earn a letter. Spell H-O-R-S-E and you\'re out. Last one standing wins.',
     minPlayers: 2,
     maxPlayers: 6,
@@ -314,26 +325,27 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
-  {
-    id: 'archery',
-    name: 'Archery Battle',
-    description: 'Aim, charge your power, and release — but watch the wind! 3 arrows a turn, highest score after 3 rounds wins.',
-    minPlayers: 2,
-    maxPlayers: 6,
-    image: `${GAME_POSTERS_BASE_URL}/archery.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
-  {
-    id: 'curling',
-    name: 'Curling',
-    description: 'Slide your stones toward the house — closest stone(s) to the button win the end. Best score after 4 ends wins the match.',
-    minPlayers: 2,
-    maxPlayers: 2,
-    image: `${GAME_POSTERS_BASE_URL}/curling.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
+  // archery temporarily removed
+  // {
+  //   id: 'archery',
+  //   name: 'Archery Battle',
+  //   description: 'Aim, charge your power, and release — but watch the wind! 3 arrows a turn, highest score after 3 rounds wins.',
+  //   minPlayers: 2,
+  //   maxPlayers: 6,
+  //   image: `${GAME_POSTERS_BASE_URL}/archery.webp`,
+  //   disabled: false,
+  //   type: 'multiplayer'
+  // },
+  // {
+  //   id: 'curling',
+  //   name: 'Curling',
+  //   description: 'Slide your stones toward the house — closest stone(s) to the button win the end. Best score after 4 ends wins the match.',
+  //   minPlayers: 2,
+  //   maxPlayers: 2,
+  //   image: `${GAME_POSTERS_BASE_URL}/curling.webp`,
+  //   disabled: false,
+  //   type: 'multiplayer'
+  // }, // curling temporarily removed
   {
     id: 'slice_frenzy',
     name: 'Slice Frenzy',
@@ -345,23 +357,24 @@ const games = [
     type: 'arcade',
     heavy: false
   },
-  {
-    id: 'skeeball',
-    name: 'Skeeball',
-    description: 'Line up your roll, charge your weight, and land in the highest-scoring ring — 9 balls, best total wins. Solo or hot-seat tournament.',
-    minPlayers: 1,
-    maxPlayers: 1,
-    image: `${GAME_POSTERS_BASE_URL}/skeeball.webp`,
-    disabled: false,
-    type: 'arcade',
-    heavy: false
-  },
+  // skeeball temporarily removed
+  // {
+  //   id: 'skeeball',
+  //   name: 'Skeeball',
+  //   description: 'Line up your roll, charge your weight, and land in the highest-scoring ring — 9 balls, best total wins. Solo or hot-seat tournament.',
+  //   minPlayers: 1,
+  //   maxPlayers: 1,
+  //   image: `${GAME_POSTERS_BASE_URL}/skeeball.webp`,
+  //   disabled: false,
+  //   type: 'arcade',
+  //   heavy: false
+  // },
   {
     id: 'tank_battle',
     name: 'Tank Battle',
-    description: 'Drive, aim, and fire in real time — first tank to fall loses. Both players act simultaneously, no turns!',
+    description: 'Drive, aim, and fire in real time in a free-for-all arena — last tank standing wins. Everyone acts simultaneously, no turns!',
     minPlayers: 2,
-    maxPlayers: 2,
+    maxPlayers: 8,
     image: `${GAME_POSTERS_BASE_URL}/tank_battle.webp`,
     disabled: false,
     type: 'multiplayer'
@@ -376,37 +389,44 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
-  {
-    id: 'football',
-    name: 'Football',
-    description: 'A real 3D arcade football match — host plays, everyone else watches courtside.',
-    minPlayers: 1,
-    maxPlayers: 1,
-    image: `${GAME_POSTERS_BASE_URL}/football.webp`,
-    disabled: false,
-    type: 'arcade',
-    heavy: true
-  },
-  {
-    id: 'blob_battle',
-    name: 'Blob Battle',
-    description: 'Grow by eating pellets and smaller blobs — avoid anything bigger than you! Last blob standing wins.',
-    minPlayers: 2,
-    maxPlayers: 8,
-    image: `${GAME_POSTERS_BASE_URL}/blob_battle.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
-  {
-    id: 'hide_seek',
-    name: 'Hide & Seek',
-    description: 'Props hide, Hunters search — first team to win their side wins the round! Roles are split automatically.',
-    minPlayers: 2,
-    maxPlayers: 8,
-    image: `${GAME_POSTERS_BASE_URL}/hide_seek.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
+  // football temporarily removed
+  // {
+  //   id: 'football',
+  //   name: 'Football',
+  //   description: 'A real 3D arcade football match — host plays, everyone else watches courtside.',
+  //   minPlayers: 1,
+  //   maxPlayers: 1,
+  //   image: `${GAME_POSTERS_BASE_URL}/football.webp`,
+  //   disabled: false,
+  //   type: 'arcade',
+  //   heavy: true
+  // },
+  // blob_battle temporarily removed
+  // {
+  //   id: 'blob_battle',
+  //   name: 'Blob Battle',
+  //   description: 'Grow by eating pellets and smaller blobs — avoid anything bigger than you! Last blob standing wins.',
+  //   minPlayers: 2,
+  //   maxPlayers: 8,
+  //   image: `${GAME_POSTERS_BASE_URL}/blob_battle.webp`,
+  //   disabled: false,
+  //   type: 'multiplayer'
+  // },
+  // hide_seek removed 2026-08 at user request — commented out, not deleted,
+  // so it can be revisited later. Backend (hide_seek.go, game_manager.go) and
+  // GameWinnerBanner.jsx/GameRulesButton.jsx entries were deliberately left
+  // in place — only the lobby picker entry and GameOverlay wiring needed to
+  // come out to make the game unreachable.
+  // {
+  //   id: 'hide_seek',
+  //   name: 'Hide & Seek',
+  //   description: 'Props hide, Hunters search — first team to win their side wins the round! Roles are split automatically.',
+  //   minPlayers: 2,
+  //   maxPlayers: 8,
+  //   image: `${GAME_POSTERS_BASE_URL}/hide_seek.webp`,
+  //   disabled: false,
+  //   type: 'multiplayer'
+  // },
   // ramp_rush temporarily removed — not enough time to finish/fix it
   // {
   //   id: 'ramp_rush',
@@ -614,17 +634,21 @@ const games = [
     type: 'arcade',
     heavy: false
   },
-  {
-    id: 'golf',
-    name: 'Mini Golf',
-    description: 'Putt through a real 3D course — fewest strokes wins! Solo practice or hot-seat tournament.',
-    minPlayers: 1,
-    maxPlayers: 1,
-    image: `${GAME_POSTERS_BASE_URL}/v2/golf.webp`,
-    disabled: false,
-    type: 'arcade',
-    heavy: true
-  },
+  // 3D Golf ("Mini Golf") removed 2026-08 at user request — commented out,
+  // not deleted, pending a hand-built 2D replacement using open-source (CC0)
+  // 2D art (see the Kenney Sports Pack / OpenGameArt research from that
+  // session). Also removed from HOT_SEAT_GAME_IDS below.
+  // {
+  //   id: 'golf',
+  //   name: 'Mini Golf',
+  //   description: 'Putt through a real 3D course — fewest strokes wins! Solo practice or hot-seat tournament.',
+  //   minPlayers: 1,
+  //   maxPlayers: 1,
+  //   image: `${GAME_POSTERS_BASE_URL}/v2/golf.webp`,
+  //   disabled: false,
+  //   type: 'arcade',
+  //   heavy: true
+  // },
   // roulette temporarily removed
   // {
   //   id: 'roulette',
@@ -659,11 +683,11 @@ if (typeof window !== 'undefined') {
 // Games eligible for tournament mode: 2-player, head-to-head games where a
 // single-elimination "winner advances" bracket makes sense. N-player party games
 // (draw_guess, typing_race, trivia, etc.) are excluded.
-const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon', 'dominoes', 'darts', 'bowling', 'basketball', 'archery', 'curling']; // ramp_rush removed here too — temporarily disabled
+const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon', 'dominoes', 'darts', 'bowling', 'basketball']; // ramp_rush/archery/football/curling removed here too — temporarily disabled
 // Hot-seat tournament: each player takes a solo turn; highest score wins
 // (golf is the one exception — lower stroke count wins, handled entirely
 // backend-side via lowerScoreWinsGameTypes in websocket_handler.go).
-const HOT_SEAT_GAME_IDS = ['fowl_play', 'toad_ball', 'golf', 'rhythm_hero', 'slice_frenzy', 'skeeball'];
+const HOT_SEAT_GAME_IDS = ['fowl_play', 'toad_ball', 'rhythm_hero', 'slice_frenzy']; // skeeball/golf removed here too — temporarily disabled
 
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 
@@ -965,6 +989,26 @@ export default function GameLobbyModal({
     const supportsAnyTournament = TOURNAMENT_GAME_IDS.includes(selectedGame) || HOT_SEAT_GAME_IDS.includes(selectedGame);
     if (!supportsAnyTournament) setIsTournamentMode(false);
   }, [selectedGame]);
+
+  // Partial asset preload — the moment the carousel is centered on Bowling
+  // (browsing it, before Start is even clicked), warm its physics-engine and
+  // lane-model URLs into the browser's HTTP cache. Deliberately a DYNAMIC
+  // import(), not a static one: GameLobbyModal is statically imported by
+  // VideoWatch.jsx/CinemaScene3DDemo.jsx (always loaded, never lazy), so a
+  // static import of BowlingGame.jsx would pull its Three.js/GLTFLoader
+  // weight into every page load unconditionally. A dynamic import here
+  // instead fetches that whole chunk (code + the CDN assets it then warms)
+  // only once a user actually browses to Bowling — the same bytes the game
+  // will need momentarily anyway if they hit Start, just fetched a little
+  // earlier. GameStartInfoModal/BowlingGame's own mount-time preload call
+  // (see preloadBowlingAssets's own doc comment) covers "fully preload while
+  // the intro popup is still showing" — this covers the earlier browsing
+  // stage. readOnly members mirroring the host's carousel don't trigger this
+  // themselves — no reason to warm assets on every spectator's device too.
+  useEffect(() => {
+    if (readOnly || selectedGame !== 'bowling') return;
+    import('./BowlingGame').then((m) => m.preloadBowlingAssets?.()).catch(() => {});
+  }, [readOnly, selectedGame]);
 
   if (!isOpen) return null;
 

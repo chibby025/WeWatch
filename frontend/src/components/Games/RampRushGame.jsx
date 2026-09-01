@@ -244,7 +244,7 @@ function TrackScene({ stage, carModelUrl, phase, launchCharge, onFlightResolved 
   );
 }
 
-export default function RampRushGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+export default function RampRushGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult, onPlayAgain }) {
   const gs = gameState?.game_state || {};
   const stages = Array.isArray(gs.stages) ? gs.stages : [];
   const round = gs.round ?? 0;
@@ -382,6 +382,7 @@ export default function RampRushGame({ gameState, players, currentUserId, onMove
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}
           onPostResult={onPostResult}
+          secondaryAction={(gameState?.host_id ?? players?.[0]?.user_id) === currentUserId && onPlayAgain ? { label: 'Play Again 🔄', onClick: onPlayAgain } : undefined}
         />
       )}
 

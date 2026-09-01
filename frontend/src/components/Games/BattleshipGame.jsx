@@ -342,14 +342,47 @@ function FireDamage() {
 
 // ── Ghost ship overlay — renders all sections as one connected element ────────
 // Used during placement to show the full ship shape at the hovered position.
-function GhostShipOverlay({ name, size, horizontal }) {
+// Also reused (via PlacedShipOverlay below) for the REAL, placed ship — this
+// is the fix for the gap/seam issue: each inner slot here is a plain,
+// unbordered flex child sitting flush against its neighbors (no `gap`, exact
+// CELL_PX sizing), unlike a grid Cell, which always has its own 1px border
+// and `overflow-hidden`. Slicing a ship's art across N bordered/clipped
+// Cells put a real border line at every section boundary — no amount of
+// widening a section's own crop survives being clipped at its own cell's
+// edge, so the ship never looked continuous. Rendering the whole ship here
+// instead, then absolutely-positioning ONE overlay over the grid (instead of
+// N separate per-cell crops inside N separate Cells), removes the seam
+// entirely — exactly how the hover ghost already looked seamless.
+function GhostShipOverlay({ name, size, horizontal, sunk = false }) {
   return (
     <div style={{ display: 'flex', flexDirection: horizontal ? 'row' : 'column', pointerEvents: 'none' }}>
       {Array.from({ length: size }, (_, i) => (
         <div key={i} style={{ position: 'relative', width: CELL_PX, height: CELL_PX, flexShrink: 0 }}>
-          <ShipSectionImage name={name} sectionIndex={i} totalSections={size} horizontal={horizontal} sunk={false} />
+          <ShipSectionImage name={name} sectionIndex={i} totalSections={size} horizontal={horizontal} sunk={sunk} />
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── Real placed-ship overlay — the actual (non-ghost) fix ─────────────────────
+// Positions the same continuous hull render above at the ship's true pixel
+// footprint on the grid. `top`/`left` are the pixel offset of the ship's
+// anchor cell (cells[0] — shipCells always builds outward from the anchor in
+// the +row/+col direction, so it's always the min-r,min-c corner) within
+// whatever `position: relative` grid container this is rendered into.
+// z-index sits below FireDamage(10)/ExplosionEffect(20) — those effects
+// visually happen ON the ship, so they need to render on top of its hull —
+// but above the plain (unindexed) cell backgrounds/borders underneath.
+// pointerEvents stays 'none' throughout: this floats above the grid's own
+// clickable Cells (attack / place / relocate) and must never intercept
+// those clicks.
+function PlacedShipOverlay({ name, cells, sunk, top, left }) {
+  const size = cells.length;
+  const horizontal = size <= 1 || cells[0].r === cells[1]?.r;
+  return (
+    <div style={{ position: 'absolute', top, left, zIndex: 1, pointerEvents: 'none' }}>
+      <GhostShipOverlay name={name} size={size} horizontal={horizontal} sunk={sunk} />
     </div>
   );
 }
@@ -420,8 +453,16 @@ function ShipAdjustControls({ cells, nudgeValidity, canRotate, onNudge, onRotate
   top = Math.max(labelH, Math.min(top, labelH + GRID_SIZE * CELL_PX - clusterSize));
 
   const btnStyle = { width: BTN, height: BTN, fontSize: 10, lineHeight: 1 };
+  // !min-h-0 !min-w-0 counters a global mobile rule (index.css:
+  // `@media (max-width: 640px) { button { min-height: 44px; min-width: 44px; } }`)
+  // that otherwise forces every one of these 22px buttons up to 44px on
+  // mobile — inside a CSS grid with fixed 22px tracks, that made each
+  // button spill into its neighbors' space, which is exactly what looked
+  // like "the directional buttons overlap." Same fix already proven for
+  // this identical class of bug elsewhere in this app (GameLobbyModal's
+  // small dot/chevron buttons hit the same global rule).
   const btnCls = (active) =>
-    `flex items-center justify-center rounded transition-colors ${
+    `flex items-center justify-center rounded transition-colors !min-h-0 !min-w-0 ${
       active
         ? 'bg-cyan-700 hover:bg-cyan-600 active:bg-cyan-500 text-white'
         : 'bg-slate-800/80 text-slate-600 cursor-not-allowed'
@@ -462,7 +503,7 @@ function ShipAdjustControls({ cells, nudgeValidity, canRotate, onNudge, onRotate
 
 function PlacementGrid({
   occupancyMap, previewOccupancy, previewValid, onCellClick, onCellHover, onLeave, ghostShip,
-  selectedPlacedCells, nudgeValidity, canRotate, onNudge, onRotate,
+  selectedPlacedCells, nudgeValidity, canRotate, onNudge, onRotate, placedShips,
 }) {
   const labelsRef = useRef(null);
   const [labelH, setLabelH] = useState(16);
@@ -496,17 +537,11 @@ function PlacementGrid({
                 onClick={() => onCellClick(r, c)}
                 onMouseEnter={() => onCellHover(r, c)}
               >
-                {/* Placed ship section */}
-                {shipData && !previewData && (
-                  <ShipSectionImage
-                    name={shipData.name}
-                    sectionIndex={shipData.sectionIndex}
-                    totalSections={shipData.totalSections}
-                    horizontal={shipData.horizontal}
-                    sunk={false}
-                  />
-                )}
-                {/* Preview tint only — ghost overlay (below) supplies the ship shape */}
+                {/* Placed ship art is no longer rendered per-cell here — see
+                    the PlacedShipOverlay pass below, one continuous image
+                    per ship rather than N separately-bordered/clipped
+                    crops. This cell only ever supplies its background tint
+                    now. */}
                 {previewData && previewValid && (
                   <div className="absolute inset-0 bg-cyan-400/20 pointer-events-none" />
                 )}
@@ -517,6 +552,19 @@ function PlacementGrid({
             );
           })}
         </div>
+      ))}
+
+      {/* Real placed ships — one continuous hull image per ship, no seams
+          between sections (see PlacedShipOverlay's own comment). */}
+      {(placedShips || []).map(ship => (
+        <PlacedShipOverlay
+          key={ship.name}
+          name={ship.name}
+          cells={ship.cells}
+          sunk={false}
+          top={labelH + ship.cells[0].r * CELL_PX}
+          left={ROW_LABEL_W + ship.cells[0].c * CELL_PX}
+        />
       ))}
 
       {/* Ghost ship overlay — a connected image of the full ship at the hovered cell */}
@@ -555,11 +603,12 @@ function PlacementGrid({
 // shipOccupancy: richer map (name, position, horizontal) — only provided for YOUR grid.
 // explosions: Map<"${boardKey}-${cellIdx}", 'hit'|'miss'>
 // sunkCells: Set<cellIdx> — cells belonging to fully sunk ships (your grid only)
-function CombatGrid({ label, board, shipOccupancy, sunkCells, isEnemy, canAttack, onAttack, explosions, boardKey }) {
+function CombatGrid({ label, board, shipOccupancy, ships, sunkCells, isEnemy, canAttack, onAttack, explosions, boardKey }) {
   return (
     <div className="flex flex-col items-center gap-0.5">
       <div className="text-xs font-semibold text-slate-300 mb-1 tracking-wide">{label}</div>
       <GridLabels />
+      <div className="relative">
       {ROW_LABELS.map((rowLabel, r) => (
         <div key={r} className="flex">
           <div className="w-6 shrink-0 text-[10px] text-slate-500 flex items-center justify-center select-none">
@@ -587,16 +636,9 @@ function CombatGrid({ label, board, shipOccupancy, sunkCells, isEnemy, canAttack
                 className={cls}
                 onClick={clickable ? () => onAttack(r, c) : undefined}
               >
-                {/* Own ship (never shown on enemy grid) */}
-                {shipData && !isEnemy && (
-                  <ShipSectionImage
-                    name={shipData.name}
-                    sectionIndex={shipData.sectionIndex}
-                    totalSections={shipData.totalSections}
-                    horizontal={shipData.horizontal}
-                    sunk={isSunk}
-                  />
-                )}
+                {/* Own ship art now rendered as a continuous overlay below
+                    (see the ships.map pass after the rows) rather than a
+                    per-cell crop here — see PlacedShipOverlay's comment. */}
 
                 {/* Fire on own damaged (non-sunk) hit cells */}
                 {damaged && !isExploding && <FireDamage />}
@@ -630,6 +672,27 @@ function CombatGrid({ label, board, shipOccupancy, sunkCells, isEnemy, canAttack
           })}
         </div>
       ))}
+
+      {/* Own ships — one continuous hull image per ship, seamless across its
+          full footprint. Never rendered for the enemy board (own ships are
+          never revealed there). Positioned relative to this wrapper's own
+          origin (top-left of row 0) — no header/label height to account for,
+          since the label text + column headers above are siblings of this
+          div, not part of it. */}
+      {!isEnemy && (ships || []).map(ship => {
+        const shipSunk = sunkCells ? ship.cells.every(({ r, c }) => sunkCells.has(idx(r, c))) : false;
+        return (
+          <PlacedShipOverlay
+            key={ship.name}
+            name={ship.name}
+            cells={ship.cells}
+            sunk={shipSunk}
+            top={ship.cells[0].r * CELL_PX}
+            left={ROW_LABEL_W + ship.cells[0].c * CELL_PX}
+          />
+        );
+      })}
+      </div>
     </div>
   );
 }
@@ -1051,6 +1114,7 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
                   canRotate={canRotateSelected}
                   onNudge={handleNudge}
                   onRotate={handleRotateSelected}
+                  placedShips={placedShips}
                 />
               </div>
             </div>
@@ -1064,6 +1128,7 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
               label="Your Ocean"
               board={boards[myBoardKey] || null}
               shipOccupancy={lockedOccupancy}
+              ships={lockedShips}
               sunkCells={mySunkCells}
               isEnemy={false}
               canAttack={false}
@@ -1103,6 +1168,7 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
               label="Your Ocean"
               board={boards[myBoardKey] || null}
               shipOccupancy={lockedOccupancy}
+              ships={lockedShips}
               sunkCells={mySunkCells}
               isEnemy={false}
               canAttack={false}
