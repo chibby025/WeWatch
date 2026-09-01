@@ -110,7 +110,28 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       webglcontextlost/webglcontextrestored listener (client_index.html)
 //       as a second, independent diagnostic for the same failure class,
 //       reported the same way.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v8/index.html`;
+//   v8 CONFIRMED the recovery patch works exactly as designed: a real user
+//       capture showed the loop surviving (no freeze) but the SAME
+//       `RuntimeError: null function` (a WASM call_indirect trap through
+//       an empty function-table slot) recurring on literally every single
+//       frame, right after a "RE_AddPolyToScene: NULL poly shader"
+//       warning -- 100% deterministic/reproducible (confirmed via a
+//       second capture mid-session showing the identical trace repeat).
+//       This fully explains "pink then black": the runtime never dies,
+//       but since nothing new is ever successfully drawn, it's visually
+//       indistinguishable from a freeze. The wasm-function[N] indices in
+//       that trace are opaque (stripped -O2 release build, no debug
+//       symbols) -- can't identify the real failing C function from them
+//       alone.
+// TEMPORARY DIAGNOSTIC ONLY -- do not leave this pointed here long-term.
+// `debug1/` is a one-off -O1 -g2 debug-symbol rebuild (same methodology
+// already used successfully for DOOM's crashes in this project's history)
+// of the *exact* same C source/patches as v8, built purely to turn the
+// v8 capture's opaque wasm-function[N] indices into real C function names
+// on the next capture. No functional/gameplay difference from v8 --
+// larger, unminified JS + unstripped wasm only, for symbolication.
+// Revert to v8 (or later) once the root cause is found and fixed.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/debug1/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
