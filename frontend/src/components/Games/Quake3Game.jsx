@@ -82,7 +82,35 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       from the parent page's own console-patching by browser design, so
 //       no engine-side fix could ever have made those lines appear in the
 //       app's own log capture without this bridge.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v7/index.html`;
+//   v8: found and fixed a real, previously-invisible bug -- a "display
+//       goes to white partial wireframes with zero console output" report
+//       (real user, both host and member) is a strong match for a WebGL
+//       context loss, which this 2014-era engine has zero handling for.
+//       Root cause confirmed by reading the compiled build directly:
+//       MainLoop.runIter's own per-frame call chain has NO exception
+//       recovery -- Emscripten's callUserCallback catches an error but
+//       its handler (handleException) RE-THROWS it, so a single
+//       exception during a single frame (a WASM trap, a bad GPU call,
+//       anything) permanently kills the entire requestAnimationFrame
+//       loop -- no more frames ever get scheduled, the canvas freezes
+//       showing whatever was mid-drawn at the moment of the crash
+//       (consistent with a "partial wireframe" look), and since an
+//       uncaught exception is a completely different browser reporting
+//       channel than console.log/warn/error, v7's own bridge (which only
+//       patches those three) never saw it -- exact match for "nothing in
+//       the logs, even right after it broke". This exact class of bug was
+//       already found and fixed once before for the DEDICATED SERVER
+//       build; that fix was never applied to the CLIENT until now. Fixed
+//       (post-build patch, mirroring the server's own): MainLoop.runIter
+//       now catches any exception, logs it via console.error (already
+//       forwarded to WeWatch's log capture, tagged "[MainLoop] frame
+//       threw, recovering: ..." with a real stack trace when available),
+//       and recovers instead of propagating -- one bad frame can no
+//       longer take down the whole render loop. Also added a genuine
+//       webglcontextlost/webglcontextrestored listener (client_index.html)
+//       as a second, independent diagnostic for the same failure class,
+//       reported the same way.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v8/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
