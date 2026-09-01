@@ -184,6 +184,19 @@ const NOISY_LOG_PATTERNS = [
   '"type":"request_playback_state"',
   '"type":"game_lobby_browsing"',
   '"type":"session_preview_updated"',
+  // Confirmed noisy via a real Quake3-debugging capture (2026-09-01): fires
+  // on every single re-render with no new information most of the time.
+  '[LeftSidebar DEBUG]',
+  '[GameLobbyModal] Modal opened!',
+  '[VideoWatch] Received broadcast_audio_state',
+  '[VideoWatch] Sent audio state',
+  '[VideoWatch] Received user_audio_state',
+  '[LiveKit] Token received',
+  // Companion LOG-level lines to the hard-excluded ServerUnreachable
+  // warn/error pair above — same reconnect-cycle story, differ only by
+  // attempt number/delay each time so exact-match dedup can't merge them.
+  'LiveKit: Disconnected',
+  'LiveKit: Unexpected disconnection',
 ];
 const VITAL_LOG_PATTERNS = [
   // Bridged from the Quake3 iframe (Quake3Game.jsx's postMessage listener,
@@ -846,29 +859,71 @@ export default function VideoWatch() {
       msg: l.args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '),
     }));
     const filtered = withMsg.filter(l => {
-      if (l.type === 'warn' || l.type === 'error') return true;
-      // Hard exclusion, checked before either list: live_ball_positions only
-      // ever appears in pool's shot_progress relay (confirmed in pool.go —
-      // the field is deleted the instant a real "shot" resolves), so its
-      // presence deterministically means "routine physics tick", not a
-      // meaningful state transition. This is the field that was flooding a
-      // real capture with dozens of near-identical game_state_update dumps
-      // during a single shot — the generic game_state_update entry in
-      // VITAL_LOG_PATTERNS below is deliberately broad (it also needs to
-      // catch the one real, rare state_version-changing update), so this
-      // check has to run first to strip the noisy majority out from under it.
+      // Hard exclusions, checked before anything else (including the
+      // warn/error bypass below) — confirmed-noisy, high-volume-repeat
+      // patterns that are never informative on repeat, regardless of
+      // severity level.
+      //
+      // live_ball_positions: pool's shot_progress relay (confirmed in
+      // pool.go — the field is deleted the instant a real "shot"
+      // resolves), so its presence deterministically means "routine
+      // physics tick". Needed here (not just NOISY_LOG_PATTERNS) because
+      // the generic game_state_update VITAL entry is deliberately broad
+      // (it also has to catch the one real, rare state_version-changing
+      // update), so this has to run first to strip the noisy majority
+      // out from under it.
       if (l.msg.includes('live_ball_positions')) return false;
+      // GameLobbyModal fires "Modal opened!" on every single re-render
+      // while the modal is open — confirmed via a real capture, dozens
+      // of near-identical lines. Needed here rather than
+      // NOISY_LOG_PATTERNS because the bare '[GameLobbyModal]' VITAL
+      // entry (meant to preserve genuinely useful lines like "Start Game
+      // button clicked!") would otherwise unconditionally override it.
+      if (l.msg.includes('[GameLobbyModal] Modal opened!')) return false;
+      // LiveKit's own reconnect-failure warning/error pair repeats
+      // byte-for-byte identically on every retry when the LiveKit server
+      // is simply unreachable (e.g. local dev with no LiveKit running) —
+      // confirmed via a real capture, 5+ repeats per session with zero
+      // new information each time. Excluded here for real, not just
+      // deduped below, since "server unreachable" doesn't need N copies
+      // to be understood — the interspersed attempt-number/delay lines
+      // differ each time and so aren't touched by this check at all.
+      if (l.msg.includes('ServerUnreachable') || l.msg.includes("Couldn't connect to server")) return false;
+      if (l.type === 'warn' || l.type === 'error') return true;
       if (VITAL_LOG_PATTERNS.some(p => l.msg.includes(p))) return true;
       if (NOISY_LOG_PATTERNS.some(p => l.msg.includes(p))) return false;
       return true;
     });
-    const text = filtered.map(l => {
+    // Collapse consecutive identical entries (same type + exact same
+    // message) into one line with a repeat count. warn/error are always
+    // kept above regardless of content ("a warning/error is never just
+    // noise") — this is the only thing that can shrink genuinely
+    // repetitive warn/error spam, confirmed via a real capture where
+    // LiveKit's own reconnect-failure warning (unreachable in local dev)
+    // repeated byte-for-byte identically 5+ times per reconnect cycle.
+    // Only merges truly back-to-back duplicates, never distant
+    // recurrences — a real "failed, recovered, failed again" sequence
+    // stays fully visible as separate lines.
+    const deduped = [];
+    for (const l of filtered) {
+      const last = deduped[deduped.length - 1];
+      if (last && last.type === l.type && last.msg === l.msg) {
+        last.repeatCount = (last.repeatCount || 1) + 1;
+        last.lastTime = l.time;
+      } else {
+        deduped.push({ ...l, repeatCount: 1 });
+      }
+    }
+    const text = deduped.map(l => {
       const t = new Date(l.time).toISOString().slice(11, 23);
-      return `[${t}] [${l.type.toUpperCase()}] ${l.msg}`;
+      const suffix = l.repeatCount > 1
+        ? ` (repeated ${l.repeatCount}x, last at ${new Date(l.lastTime).toISOString().slice(11, 23)})`
+        : '';
+      return `[${t}] [${l.type.toUpperCase()}] ${l.msg}${suffix}`;
     }).join('\n');
-    const droppedCount = logs.length - filtered.length;
+    const droppedCount = logs.length - deduped.length;
     navigator.clipboard.writeText(text).then(
-      () => toast.success(`✅ Copied ${filtered.length} logs to clipboard${droppedCount > 0 ? ` (${droppedCount} noisy lines filtered out)` : ''}`),
+      () => toast.success(`✅ Copied ${deduped.length} logs to clipboard${droppedCount > 0 ? ` (${droppedCount} noisy/duplicate lines collapsed)` : ''}`),
       () => toast.error('Failed to copy logs'),
     );
   }, []);
