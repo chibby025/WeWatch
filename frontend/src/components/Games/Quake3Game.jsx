@@ -61,7 +61,19 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       from first frame onward, in every sample, with or without this
 //       fix) -- so this is confirmed correct by direct source reading of
 //       the actual bug, not by a passing automated visual test.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v5/index.html`;
+//   v6: quieted 5 always-fires-identically boot-noise Com_Printf calls
+//       (cvar.c's "will be changed upon restarting", net_ip.c's IPv6-
+//       unsupported-in-this-sandbox sequence, snd_codec.c/snd_openal.c's
+//       expected sound-fallback warnings, SDL_QuitSubSystem's duplicate
+//       "(and ignored)" print) -- real per-call JS-bridge cost, not just
+//       console noise. Also upgraded one real logging gap: the raw-name
+//       (no explicit .shader script) missing-texture path in tr_shader.c
+//       used PRINT_DEVELOPER (silent unless "developer 1"), the one path
+//       where a genuinely missing map texture could fail completely
+//       silently -- upgraded to PRINT_WARNING and tagged
+//       "[TEXTURE MISSING]" consistently across all 4 texture-load-
+//       failure call sites in the shader system.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v6/index.html`;
 // One shared Railway service (the "quake3-supervisor") lazily spawns and
 // tears down a real dedicated-server process per active room -- see the
 // supervisor's own README/index.js for the full per-room isolation design.
