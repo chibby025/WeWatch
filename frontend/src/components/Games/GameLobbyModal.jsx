@@ -315,16 +315,17 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
-  {
-    id: 'basketball',
-    name: 'Basketball Shootout',
-    description: 'Sink a shot and everyone else must match it — miss the match and you earn a letter. Spell H-O-R-S-E and you\'re out. Last one standing wins.',
-    minPlayers: 2,
-    maxPlayers: 6,
-    image: `${GAME_POSTERS_BASE_URL}/basketball.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
+  // basketball temporarily removed
+  // {
+  //   id: 'basketball',
+  //   name: 'Basketball Shootout',
+  //   description: 'Sink a shot and everyone else must match it — miss the match and you earn a letter. Spell H-O-R-S-E and you\'re out. Last one standing wins.',
+  //   minPlayers: 2,
+  //   maxPlayers: 6,
+  //   image: `${GAME_POSTERS_BASE_URL}/basketball.webp`,
+  //   disabled: false,
+  //   type: 'multiplayer'
+  // },
   // archery temporarily removed
   // {
   //   id: 'archery',
@@ -683,7 +684,7 @@ if (typeof window !== 'undefined') {
 // Games eligible for tournament mode: 2-player, head-to-head games where a
 // single-elimination "winner advances" bracket makes sense. N-player party games
 // (draw_guess, typing_race, trivia, etc.) are excluded.
-const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon', 'dominoes', 'darts', 'bowling', 'basketball']; // ramp_rush/archery/football/curling removed here too — temporarily disabled
+const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon', 'dominoes', 'darts', 'bowling']; // ramp_rush/archery/football/curling/basketball removed here too — temporarily disabled
 // Hot-seat tournament: each player takes a solo turn; highest score wins
 // (golf is the one exception — lower stroke count wins, handled entirely
 // backend-side via lowerScoreWinsGameTypes in websocket_handler.go).

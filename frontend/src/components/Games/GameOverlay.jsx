@@ -13,7 +13,7 @@ import CrazyEightsGame from './CrazyEightsGame';
 import DominoesGame from './DominoesGame';
 import DartsGame from './DartsGame';
 import BowlingGame from './BowlingGame';
-const BasketballGame = lazy(() => import('./BasketballGame'));
+// const BasketballGame = lazy(() => import('./BasketballGame')); // temporarily removed
 // import ArcheryGame from './ArcheryGame'; // temporarily removed
 // import CurlingGame from './CurlingGame'; // temporarily removed
 import LudoGame from './LudoGame';
@@ -303,33 +303,33 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
         />
       );
 
-    case 'basketball':
-      return (
-        <Suspense
-          fallback={(
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-              <div className="flex flex-col items-center gap-4">
-                <div className="relative w-16 h-16">
-                  <span className="absolute inset-0 flex items-center justify-center text-4xl">🏀</span>
-                  <div className="absolute inset-0 rounded-full border-4 border-gray-700 border-t-orange-500 animate-spin" />
-                </div>
-                <p className="text-white text-sm font-medium">Loading Basketball…</p>
-              </div>
-            </div>
-          )}
-        >
-          <BasketballGame
-            gameState={activeGame}
-            players={activeGame.players}
-            currentUserId={currentUserId}
-            onMove={handleMove}
-            onClose={onClose}
-            onEndGame={onEndGame}
-            onPlayAgain={onPlayAgain}
-            onPostResult={onPostResult}
-          />
-        </Suspense>
-      );
+    // case 'basketball': temporarily removed
+    //   return (
+    //     <Suspense
+    //       fallback={(
+    //         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+    //           <div className="flex flex-col items-center gap-4">
+    //             <div className="relative w-16 h-16">
+    //               <span className="absolute inset-0 flex items-center justify-center text-4xl">🏀</span>
+    //               <div className="absolute inset-0 rounded-full border-4 border-gray-700 border-t-orange-500 animate-spin" />
+    //             </div>
+    //             <p className="text-white text-sm font-medium">Loading Basketball…</p>
+    //           </div>
+    //         </div>
+    //       )}
+    //     >
+    //       <BasketballGame
+    //         gameState={activeGame}
+    //         players={activeGame.players}
+    //         currentUserId={currentUserId}
+    //         onMove={handleMove}
+    //         onClose={onClose}
+    //         onEndGame={onEndGame}
+    //         onPlayAgain={onPlayAgain}
+    //         onPostResult={onPostResult}
+    //       />
+    //     </Suspense>
+    //   );
 
     // case 'archery': temporarily removed
     //   return (

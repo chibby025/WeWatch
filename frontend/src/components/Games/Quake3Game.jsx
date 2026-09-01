@@ -222,7 +222,33 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       games/quake3-v2/assets/, and updated client_index.html's fs_cdn
 //       to point there -- confirmed fresh via a direct fetch showing the
 //       correct checksum and today's real last-modified timestamp.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v11/index.html`;
+//   v12 Real user's v11 retest confirmed the crash and NULL-poly-shader
+//       spam are both genuinely fixed, but surfaced 6 real, VISIBLE
+//       missing-texture warnings (not gameplay-blocking, just cosmetic):
+//       projectionShadow (confirmed via source -- registered
+//       unconditionally at renderer init, but only ever drawn with when
+//       cg_shadows uses the projection-shadow style, which is unreachable
+//       now that shadows are disabled -- zero visual effect, log-only,
+//       left alone) + 6 menu-art widgets: 3_cursor2, switch_on/off,
+//       sliderbutt_0/1, slider2. Confirmed via direct pak inspection AND
+//       a real, official Ubuntu-repo openarena-085-data package download
+//       (same content, same gap in both -- not something this project's
+//       own curated asset subset dropped) that 5 of these 6 genuinely
+//       exist, just under menu/art_blueish/* instead of the generic
+//       menu/art/* path OpenArena's own menu-def code references; the
+//       6th (slider2, the slider-track background) is completely absent
+//       from OpenArena 0.8.5 under any theme name in either source. Fixed
+//       with a small new shader script (aliasing the 5 real blueish
+//       widgets to their menu/art/* names) + one small synthesized
+//       placeholder image for the genuinely-missing slider2, both added
+//       to pak8-oa-vm.pk3. Since this touches pak8 again (same pak the
+//       v11 fix touched), bumped assets to yet another fresh prefix,
+//       games/quake3-v3/assets/, rather than reuse -v2 -- its own
+//       manifest.json had already been fetched during v11's own
+//       verification moments earlier and could plausibly have started
+//       caching on its own, same class of risk this whole v11 fix was
+//       about avoiding in the first place.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v12/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
