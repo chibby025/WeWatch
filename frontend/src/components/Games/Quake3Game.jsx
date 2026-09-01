@@ -202,7 +202,27 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //          genuinely engages, handling both root causes with one call.
 //          Re-shows itself if the user later exits fullscreen (Esc, etc.)
 //          so there's an obvious way back in.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v10/index.html`;
+//   v11 The v10 cg_shadows fix never actually reached the client -- real
+//       user retest still showed the identical spam. Root cause:
+//       games/quake3/assets/manifest.json (the one, single URL every
+//       client fetches to learn each pak's current checksum -- see
+//       sys_common.js's UpdateManifest) hit a genuinely stuck BunnyCDN
+//       edge cache -- confirmed directly via headers (cache-control:
+//       public, max-age=2592000, cdn-cache: HIT, last-modified from
+//       WEEKS before this fix) that kept serving a stale checksum even
+//       immediately after a fresh re-upload, and even with a cache-
+//       busting query string appended (confirmed empirically this pull
+//       zone ignores query strings for its cache key -- doesn't help
+//       here). Same class of stuck-cache issue this project has hit
+//       with BunnyCDN before; same proven fix -- move to a genuinely new
+//       path. Since manifest.json and every pak fetch are BOTH always
+//       relative to the single `fs_cdn` prefix (no way to freshen just
+//       the manifest on its own), re-uploaded the FULL assets tree (all
+//       8 paks + a correct manifest, ~340MB) to a new prefix,
+//       games/quake3-v2/assets/, and updated client_index.html's fs_cdn
+//       to point there -- confirmed fresh via a direct fetch showing the
+//       correct checksum and today's real last-modified timestamp.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v11/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
