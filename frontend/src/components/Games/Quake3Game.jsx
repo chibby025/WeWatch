@@ -151,7 +151,58 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       today uses this null path (if it did, it would already be
 //       crashing constantly). Clean -O2 production rebuild, no debug
 //       flags, all 4 post-build patches re-applied.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v9/index.html`;
+//   v10 CONFIRMED v9's crash fix works -- real user report: "moves past
+//       [the pink hue]... loads for both members". Two follow-up issues
+//       from that same test, both root-caused via source reading (not
+//       guessed) and both fixed here, shell-page-only (no C/WASM rebuild
+//       needed -- client_index.html is a plain static file):
+//       1. "wireframing at the top" + the RE_AddPolyToScene warning still
+//          spamming (1995x in ~9s, no longer crashing, just noisy) --
+//          traced to CG_PlayerShadow (cg_players.c) calling
+//          trap_R_RegisterShader("markShadow") for the blob-shadow
+//          graphic, which is genuinely absent from this project's entire
+//          curated OpenArena asset pack (confirmed: grepped every pak,
+//          zero matches) -- so it always registers as handle 0/null, and
+//          CG_PlayerShadow re-adds this null-shader poly for every
+//          visible player, every single frame (matches the sustained,
+//          non-accumulating spam rate exactly). Fixed by disabling
+//          mark-based blob shadows (cg_shadows 1 -> 0 in default.cfg,
+//          repacked into pak8-oa-vm.pk3, re-uploaded both the unprefixed
+//          bootstrap.js-facing copy and the checksum-addressed
+//          static-hosting copy + regenerated manifest.json) rather than
+//          sourcing/adding the missing graphic -- avoids the missing
+//          asset entirely at the cost of a minor, purely cosmetic loss
+//          (no shadow blob under players).
+//       2. "WASD and mouse controls don't work" -- two compounding, both
+//          confirmed via direct source reads of the actual Emscripten SDK
+//          this was built against (not assumed from Quake3 lore):
+//          a) Mouselook: IN_ActivateMouse's only real pointer-lock trigger
+//             is SDL_ShowCursor(0) (SDL_WM_GrabInput itself is a total
+//             no-op in this Emscripten SDK, confirmed via libsdl.js
+//             source) -- and SDL_ShowCursor(0) is unconditionally gated
+//             on `Browser.isFullscreen`. Nothing in this WeWatch-authored
+//             shell ever requested real browser Fullscreen, so pointer
+//             lock could never engage no matter what the C engine did.
+//          b) Keyboard: touch-controls.js's own comment already documents
+//             the mechanism precisely -- SDL_GetAppState() derives
+//             SDL_APPINPUTFOCUS from a live document.hasFocus() check
+//             every frame, and IN_Frame forces input handling off the
+//             instant that's false. An embedded <iframe>'s document does
+//             NOT auto-register as focused just because its content was
+//             clicked. touch-controls.js already has the fix
+//             (window.focus()) but gates its whole file behind
+//             `if (!isTouchDevice()) return` -- desktop players never
+//             got it.
+//          Fixed with one new desktop-only (touch devices already have a
+//          working dedicated control scheme, untouched) "Click to Play"
+//          overlay in client_index.html: on click, calls window.focus()
+//          and Browser.requestFullscreen(true, true) -- Emscripten's own
+//          canonical API (libbrowser.js), which requests real Fullscreen
+//          AND calls canvas.requestPointerLock() itself once fullscreen
+//          genuinely engages, handling both root causes with one call.
+//          Re-shows itself if the user later exits fullscreen (Esc, etc.)
+//          so there's an obvious way back in.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v10/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
