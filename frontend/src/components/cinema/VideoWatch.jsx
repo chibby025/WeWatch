@@ -186,6 +186,11 @@ const NOISY_LOG_PATTERNS = [
   '"type":"session_preview_updated"',
 ];
 const VITAL_LOG_PATTERNS = [
+  // Bridged from the Quake3 iframe (Quake3Game.jsx's postMessage listener,
+  // itself fed by client_index.html's console.log/warn/error bridge) --
+  // never subject to the noisy-pattern denylist, since these are exactly
+  // the lines this filter exists to preserve.
+  '[Quake3 Engine]',
   '[Pool] board sync',
   '[Pool] SHOT RESOLVED',
   '[VideoWatch] Making move',

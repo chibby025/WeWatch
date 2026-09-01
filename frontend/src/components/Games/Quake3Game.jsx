@@ -73,7 +73,22 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       silently -- upgraded to PRINT_WARNING and tagged
 //       "[TEXTURE MISSING]" consistently across all 4 texture-load-
 //       failure call sites in the shader system.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v6/index.html`;
+//   v7: client_index.html (the shell page, not the compiled engine --
+//       ioquake3.js/.wasm are byte-identical to v6) now bridges the
+//       engine's own console.log/warn/error output to this component via
+//       postMessage, which feeds it into WeWatch's own window.capturedLogs
+//       ("green logs" export button). Previously invisible there entirely
+//       -- a cross-origin sandboxed iframe's console is fully isolated
+//       from the parent page's own console-patching by browser design, so
+//       no engine-side fix could ever have made those lines appear in the
+//       app's own log capture without this bridge.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v7/index.html`;
+// Only messages carrying this exact source tag, from exactly this CDN
+// origin, are ever trusted -- same split already established for DOOM's
+// relay bridge (validate on the receiving end, since the shell page posts
+// with targetOrigin '*' to work across both local dev and production
+// embeds).
+const ENGINE_LOG_SOURCE = 'wewatch-quake3';
 // One shared Railway service (the "quake3-supervisor") lazily spawns and
 // tears down a real dedicated-server process per active room -- see the
 // supervisor's own README/index.js for the full per-room isolation design.
@@ -100,6 +115,29 @@ export default function Quake3Game({ roomId, onClose, onEndGame, isHost }) {
   useEffect(() => {
     if (loaded && !isMobileDevice()) setShowControls(true);
   }, [loaded]);
+
+  // Bridges the engine's own console output (Com_Printf, including
+  // [TEXTURE MISSING] etc.) into window.capturedLogs -- the same array
+  // VideoWatch.jsx's own console.log/warn/error interception feeds, and
+  // the "green logs" export button reads from. Pushed directly here
+  // rather than threaded through VideoWatch -- window.capturedLogs is a
+  // plain global array, not React state, so there's nothing to lift.
+  useEffect(() => {
+    const handler = (event) => {
+      if (event.origin !== QUAKE3_ORIGIN) return;
+      const data = event.data;
+      if (!data || data.source !== ENGINE_LOG_SOURCE || data.type !== 'engine-log') return;
+      if (!window.capturedLogs) window.capturedLogs = [];
+      window.capturedLogs.push({
+        type: data.level === 'error' ? 'error' : data.level === 'warn' ? 'warn' : 'log',
+        time: Date.now(),
+        args: [`[Quake3 Engine] ${data.text}`],
+      });
+      if (window.capturedLogs.length > 5000) window.capturedLogs.splice(0, 1000);
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
 
   // Every player is a real, identical participant (no host/spectator
   // split) -- a plain close only leaves the game locally for that one
