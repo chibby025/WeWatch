@@ -123,15 +123,35 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       that trace are opaque (stripped -O2 release build, no debug
 //       symbols) -- can't identify the real failing C function from them
 //       alone.
-// TEMPORARY DIAGNOSTIC ONLY -- do not leave this pointed here long-term.
-// `debug1/` is a one-off -O1 -g2 debug-symbol rebuild (same methodology
-// already used successfully for DOOM's crashes in this project's history)
-// of the *exact* same C source/patches as v8, built purely to turn the
-// v8 capture's opaque wasm-function[N] indices into real C function names
-// on the next capture. No functional/gameplay difference from v8 --
-// larger, unminified JS + unstripped wasm only, for symbolication.
-// Revert to v8 (or later) once the root cause is found and fixed.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/debug1/index.html`;
+//   v9 ROOT CAUSE FOUND AND FIXED, confirmed via a debug-symbol rebuild
+//       (`debug1/`, temporary diagnostic only, never shipped as a real
+//       version) + direct wasm-dis disassembly of the exact crashing
+//       function -- not guessed. The call_indirect trap is
+//       `qglMultiTexCoord2fARB` (a legacy immediate-mode multitexture GL
+//       function pointer) being called while genuinely NULL, gated on
+//       `glState.currenttmu != 0`, inside R_ArrayElementDiscrete
+//       (tr_shade.c -- gets inlined into R_DrawStripElements at -O1,
+//       explaining why the debug trace showed R_DrawStripElements as the
+//       crashing frame directly). This is a rare per-vertex fallback path
+//       (R_DrawElements only reaches it when qglLockArraysEXT is unbound)
+//       -- the engine's *normal*, everyday multitexture rendering
+//       (DrawMultitextured / RB_StageIteratorLightmappedMultitexture,
+//       used for all regular lightmapped world geometry) never calls this
+//       per-vertex form at all; it sets up client-side texcoord arrays
+//       and draws in one batched call. So qglMultiTexCoord2fARB's actual
+//       binding is never exercised anywhere except this one edge case --
+//       explaining why regular gameplay/menu rendering has always worked
+//       fine right up until a poly/mark (RE_AddPolyToScene) happened to
+//       hit this exact fallback while currenttmu was left nonzero.
+//       Fixed the same way every other platform-quirk GL gap in this
+//       port has been handled (tr_shade.c): guard the call with
+//       `&& qglMultiTexCoord2fARB`, falling back to the safe
+//       single-texcoord branch instead of crashing -- zero risk to
+//       anything currently working, since nothing that renders correctly
+//       today uses this null path (if it did, it would already be
+//       crashing constantly). Clean -O2 production rebuild, no debug
+//       flags, all 4 post-build patches re-applied.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v9/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
