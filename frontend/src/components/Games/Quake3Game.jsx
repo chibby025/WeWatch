@@ -12,11 +12,11 @@ import { useEffect, useRef, useState } from 'react';
 import { X as CloseIcon } from 'lucide-react';
 
 const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
-// v5, not v1/v2/v3/v4 -- each fixed a real, separate connect-hang or
-// rendering bug in the quake3_fork checkout (older versions deliberately
-// abandoned rather than overwritten in place, per this project's own
-// established BunnyCDN edge-cache convention -- a same-path re-upload can
-// get permanently stuck serving a stale version, with no purge access
+// v6, not v1-v5 -- each fixed a real, separate connect-hang or rendering
+// bug in the quake3_fork checkout (older versions deliberately abandoned
+// rather than overwritten in place, per this project's own established
+// BunnyCDN edge-cache convention -- a same-path re-upload can get
+// permanently stuck serving a stale version, with no purge access
 // available in this environment):
 //   v2: "Duplicate GUID" connect rejection -- CL_UpdateGUID (cl_main.c) was
 //       reading a persisted "qkey" file shared by every same-origin
