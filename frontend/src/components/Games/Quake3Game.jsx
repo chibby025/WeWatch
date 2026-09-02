@@ -346,7 +346,53 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       ID (an unscoped `railway logs` call was found to show stale,
 //       historical output from a previous deployment -- a real CLI
 //       gotcha, not a second cache bug).
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v14/index.html`;
+//   v15 Real user's v14 retest: guns/items load correctly now, but two
+//       remaining reports. (1) A dramatic slowdown near environmental
+//       hazards (lava) that clears once you move past it. Root-caused
+//       via direct source reading (not guessed): the log's own
+//       "compiled vertex arrays: disabled" / "rendering primitives:
+//       multiple glArrayElement" lines confirm R_DrawElements
+//       (renderergl1/tr_shade.c) is taking its slow, one-vertex-at-a-
+//       time fallback path (R_DrawStripElements/R_ArrayElementDiscrete,
+//       real JS-bridge calls per vertex) for EVERY triangle strip in the
+//       entire game -- its own heuristic picks that path whenever
+//       qglLockArraysEXT (GL_EXT_compiled_vertex_array) is unbound.
+//       That extension has no real WebGL equivalent and will genuinely
+//       never bind on this platform -- but the fast alternative
+//       (qglDrawElements, a direct `#define` alias to WebGL's real,
+//       always-available glDrawElements, confirmed via qgl.h -- not a
+//       runtime pointer that could ever be null the way
+//       qglLockArraysEXT is) doesn't actually need that extension at
+//       all. The heuristic was tuned for 1999 desktop GL drivers and is
+//       simply wrong here. Lava areas hit this hardest because wave-
+//       deformed liquid surfaces stack extra per-vertex CPU-side
+//       deformVertexes math on top of the already-slow per-vertex-call
+//       path, and the cost scales with how much of the surface is
+//       currently in view -- exactly matching "slows down near it,
+//       smooths out once you pass it". Fixed with an #ifdef EMSCRIPTEN
+//       branch forcing the fast, single-batched-call path
+//       unconditionally, bypassing the qglLockArraysEXT-based check.
+//       Should meaningfully help general smoothness too, not just lava
+//       specifically, since it affects every triangle in the game.
+//       (2) "an initial pink hue before it normalizes" -- Quake3's
+//       classic default-image placeholder, shown briefly whenever a
+//       surface's texture hasn't finished uploading to the GPU yet.
+//       The log shows a genuine ~1.5s asset-loading/texture-binding
+//       burst (CL_InitCGame) right as real gameplay starts -- an
+//       inherent one-time warm-up, not really "fixable" at the engine
+//       level. What WAS a real, fixable gap: Quake3Game.jsx's own
+//       loading overlay was gated purely on the iframe's onLoad DOM
+//       event -- which fires the instant the shell HTML parses (near-
+//       instant), nowhere close to when the actual engine finishes
+//       booting/connecting/loading. Users were seeing raw, still-
+//       loading gameplay (including this exact warm-up window) for the
+//       whole remaining boot sequence. Fixed by extending the loading
+//       screen to also wait for a real "CL_InitCGame:" marker forwarded
+//       through the existing engine-log bridge (plus a small buffer for
+//       the browser's own WebGL uploads to settle), with a 25s fallback
+//       timeout so a genuine connect failure can't leave a user stuck
+//       behind the spinner forever.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v15/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
@@ -386,6 +432,21 @@ function sanitizeQuake3Name(raw) {
 export default function Quake3Game({ roomId, onClose, onEndGame, isHost }) {
   const { currentUser } = useAuth();
   const [loaded, setLoaded] = useState(false);
+  // `loaded` only means the iframe's own HTML finished parsing -- near-
+  // instant, since it's just a small shell page with inline scripts. The
+  // real engine boot (WASM init, asset download, connect, map load, and a
+  // real ~1-1.5s texture-upload burst right as gameplay starts --
+  // CL_InitCGame in the engine's own log) takes far longer and happens
+  // entirely inside the iframe's own JS runtime, invisible to a plain DOM
+  // onLoad event. Without this, users saw raw, still-loading gameplay for
+  // that whole window -- surfaces whose textures hadn't finished
+  // uploading yet render with Quake3's classic pink/black default-image
+  // placeholder, reported as "an initial pink hue before it normalizes".
+  // `engineReady` is set from the CL_InitCGame log line itself (via the
+  // same engine-log bridge below), plus a small buffer so the browser's
+  // own WebGL texture uploads have a moment to actually settle after the
+  // engine's own bookkeeping says they're done.
+  const [engineReady, setEngineReady] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const iframeRef = useRef(null);
 
@@ -402,8 +463,20 @@ export default function Quake3Game({ roomId, onClose, onEndGame, isHost }) {
   const quake3Url = `${QUAKE3_CLIENT_URL}?wsurl=${encodeURIComponent(wsUrl)}&connect%20x:1&name%20${encodeURIComponent(playerName)}`;
 
   useEffect(() => {
-    if (loaded && !isMobileDevice()) setShowControls(true);
-  }, [loaded]);
+    if (engineReady && !isMobileDevice()) setShowControls(true);
+  }, [engineReady]);
+
+  // Safety net: if CL_InitCGame never fires (a failed connect, a dropped
+  // relay, anything else going wrong before the engine reaches that
+  // point), engineReady must not stay false forever -- that would leave
+  // the user stuck behind the loading spinner indefinitely, strictly
+  // worse than today's behavior. 25s is comfortably past every real
+  // boot-to-CL_InitCGame time seen in testing (a few seconds at most).
+  useEffect(() => {
+    if (engineReady) return undefined;
+    const t = setTimeout(() => setEngineReady(true), 25000);
+    return () => clearTimeout(t);
+  }, [engineReady]);
 
   // Bridges the engine's own console output (Com_Printf, including
   // [TEXTURE MISSING] etc.) into window.capturedLogs -- the same array
@@ -416,6 +489,17 @@ export default function Quake3Game({ roomId, onClose, onEndGame, isHost }) {
       if (event.origin !== QUAKE3_ORIGIN) return;
       const data = event.data;
       if (!data || data.source !== ENGINE_LOG_SOURCE || data.type !== 'engine-log') return;
+      // CL_InitCGame fires exactly once per real match/level-load,
+      // regardless of player identity -- a robust, fixed-string marker
+      // (unlike matching on "<username> entered the game", which would
+      // work but is needlessly fragile to name/color-code formatting).
+      // By this point cgame is loaded, map geometry is loaded, and every
+      // registered image has been touched/pre-uploaded -- the small
+      // extra delay lets the browser's own WebGL uploads actually settle
+      // before the loading screen lifts.
+      if (typeof data.text === 'string' && data.text.includes('CL_InitCGame:')) {
+        setTimeout(() => setEngineReady(true), 600);
+      }
       if (!window.capturedLogs) window.capturedLogs = [];
       window.capturedLogs.push({
         type: data.level === 'error' ? 'error' : data.level === 'warn' ? 'warn' : 'log',
@@ -438,10 +522,14 @@ export default function Quake3Game({ roomId, onClose, onEndGame, isHost }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
-      {!loaded && (
+      {(!loaded || !engineReady) && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-white gap-3">
           <div className="w-10 h-10 rounded-full border-2 border-white/25 border-t-white animate-spin" />
-          <p className="text-sm text-gray-400">Loading Quake Death Match… (first load may take a moment)</p>
+          <p className="text-sm text-gray-400">
+            {!loaded
+              ? 'Loading Quake Death Match… (first load may take a moment)'
+              : 'Connecting to the match…'}
+          </p>
         </div>
       )}
       <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
