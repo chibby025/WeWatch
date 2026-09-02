@@ -582,7 +582,30 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       baseoa-v4 (bootstrap.js's CDN_BASE updated, Railway redeployed) --
 //       the dedicated server has no use for cg_*/r_* cvars itself, this
 //       is purely to keep the two copies from silently drifting apart.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v21/index.html`;
+//   v22 v21's SIMD + cvar pass made "no major change" -- user still saw a
+//       real slowdown near lava on a laptop. Root cause is structural,
+//       not a new bug: still forced onto r_primitives=1 (the slow per-
+//       vertex path) by the still-unfixed batched-draw bug (v18-v20
+//       history), so every surface pays a JS/WASM-boundary-crossing cost
+//       per vertex, and lava -- even already halved once in v17 -- is
+//       still the densest single surface in the map. Offered a further
+//       lava-only tweak (quick, safe) alongside actually root-causing the
+//       batched-draw bug (bigger payoff, no timeline guarantee); user
+//       chose the quick tweak only. Two more cuts to lava_perf_fix.shader
+//       (pak8-oa-vm.pk3), same "keep gameplay surfaceparms + the waving
+//       signature, cut per-vertex cost" principle as v17: tessSize
+//       256->512 (halves the tessellated vertex count again) and dropped
+//       tcMod turb, keeping only tcMod scroll (removes one of two
+//       per-vertex texcoord computations on the remaining stage). Real,
+//       honest further visual softening in exchange for real cost
+//       reduction -- explicitly incremental, not expected to fully
+//       resolve the underlying primitives=1 ceiling on its own.
+//       Same asset-path-bump discipline as v21: client base
+//       games/quake3-v8 -> games/quake3-v9, supervisor mirror
+//       baseoa-v4 -> baseoa-v5. Engine binaries unchanged from v21 (no
+//       C/WASM changes this round) -- only index.html (new fs_cdn) and
+//       the pak content differ.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v22/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
