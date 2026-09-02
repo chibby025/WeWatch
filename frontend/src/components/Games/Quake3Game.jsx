@@ -552,7 +552,37 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       libglemu.js SDK-level index-conversion fix in place either way
 //       -- it's correct, independent groundwork for whoever picks the
 //       batched-path investigation back up.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v20/index.html`;
+//   v21 v20's revert fixed the texture corruption (user-confirmed), but
+//       brought back the general slowness the batched path had been
+//       masking -- asked what's left to reduce processing cost without
+//       touching the now-known-buggy batched-draw path again. Two
+//       changes, both deliberately zero-risk to correctness (neither
+//       touches rendering LOGIC, only compiled-in defaults / codegen):
+//        1. -msimd128 added to the js-platform build (ioq3/Makefile,
+//           OPTIMIZEVM) -- pure WASM SIMD vectorization of existing
+//           per-vertex math, same source, same logic, just faster
+//           codegen. Can't reintroduce the v15/v18-class bug since it
+//           changes no program behavior.
+//        2. Three safe perf cvars flipped in default.cfg (inside
+//           pak8-oa-vm.pk3, this project's own override pak): cg_marks 0
+//           (stop bullet-mark decals from accumulating), r_fastsky 1
+//           (flat-color sky instead of the full skybox pass), r_picmip 2
+//           (lower-res textures, less memory bandwidth per frame).
+//           Explicitly did NOT set r_vertexlight 1 (would've been the
+//           single biggest win but strips lightmap detail game-wide --
+//           asked first, user said skip it, so lightmaps stay on).
+//       pak8-oa-vm.pk3's content changed again (default.cfg), so per this
+//       project's own established BunnyCDN stuck-edge-cache handling: the
+//       client-facing checksum-addressed asset base moved games/quake3-v7
+//       -> games/quake3-v8 (client_index.html's fs_cdn updated to match;
+//       prerender_index.py's own CONTENT var was found stale -- pointing
+//       at the unversioned path from before v7 even existed -- and fixed
+//       too, with a note not to trust it blindly next time), and the
+//       supervisor's own server-side pak mirror moved baseoa-v3 ->
+//       baseoa-v4 (bootstrap.js's CDN_BASE updated, Railway redeployed) --
+//       the dedicated server has no use for cg_*/r_* cvars itself, this
+//       is purely to keep the two copies from silently drifting apart.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v21/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
