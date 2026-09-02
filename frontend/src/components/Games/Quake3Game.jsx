@@ -481,7 +481,40 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       primitives=2 override tr_shade.c had in v15 (this time with the
 //       actual bug fixed, not just avoided) -- v16/v17's revert is
 //       superseded, not layered on top of.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v18/index.html`;
+//   v19 Real user's v18 retest: the major geometric distortion (guns/
+//       arena/geometry in the wrong shape/position) is confirmed fixed
+//       by v18's index-buffer fix, and the game runs smooth. But a
+//       narrower, remaining texture-specific issue on gun and lava
+//       surfaces specifically -- described as "stretched/skewed" plus
+//       "seams/gaps" (not garbled/wrong-colored, ruling out a data-
+//       corruption class of bug and pointing at texture-coordinate
+//       offset/binding specifically). Traced the actual GPU-side upload
+//       path (renderer.prepare() in libglemu.js, not yet investigated
+//       in v18) and found a second, real, plausible bug source: the
+//       engine's own boot log has been explicitly warning about this
+//       exact flag this entire investigation ("using emscripten GL
+//       emulation unsafe opts. If weirdness happens, try
+//       -sGL_UNSAFE_OPTS=0") -- GL_UNSAFE_OPTS defaults to true in this
+//       SDK and this project never overrode it. It's a "skip re-
+//       uploading vertex data if the same renderer/buffer/stride looks
+//       active as last draw call" optimization -- and that reuse check
+//       never accounts for the CPU-side restride buffer's *content*
+//       having changed between two different surfaces that happen to
+//       share the same GPU buffer/stride (gun view-models and lava both
+//       use distinctive, non-lightmapped iterators/strides, plausibly
+//       common enough with each other or adjacent surfaces to trigger
+//       this false-positive "skip" and render stale vertex/texcoord
+//       data from a previous draw -- matching "stretched/skewed"/
+//       "seams" far better than the already-fixed index-count bug
+//       would). Disabled via -sGL_UNSAFE_OPTS=0 (ioq3/Makefile,
+//       CLIENT_LDFLAGS) -- exactly the engine's own suggested
+//       troubleshooting step, not a new theory. A flags-only Makefile
+//       change, so forced a genuinely clean rebuild (make's mtime-based
+//       tracking doesn't reliably detect flag-only changes) -- verified
+//       the resulting compiled output no longer contains the "canSkip"
+//       logic that flag used to compile in, and that v18's own index-
+//       conversion fix is still present unchanged.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v19/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
