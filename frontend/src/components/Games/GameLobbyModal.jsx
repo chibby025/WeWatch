@@ -690,6 +690,41 @@ const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'con
 // backend-side via lowerScoreWinsGameTypes in websocket_handler.go).
 const HOT_SEAT_GAME_IDS = ['fowl_play', 'toad_ball', 'rhythm_hero', 'slice_frenzy']; // skeeball/golf removed here too — temporarily disabled
 
+// Quake Death Match — stage & game-mode selection. A curated subset of the
+// 47 real maps bundled in the supervisor's own asset pack (confirmed
+// present via `unzip -l pak1-maps.pk3`, not guessed) — OpenArena's own
+// flagship oa_dm1-7 deathmatch set, plus the dm4ish/dm6ish pair already
+// used as the (until now, hardcoded) default. Deliberately NOT the full
+// 47 — most of the rest are obscure community maps never verified to play
+// well, and this list only needs to grow, never shrink, without breaking
+// anyone's saved state (map id is just a string, sent fresh every game).
+// Kept in sync BY HAND with the identical allowlist in two other places
+// this can't share code with: backend/internal/handlers/games/
+// websocket_handler.go (server-side validation, since a client value is
+// never trusted directly for a spawn argument) and ~/dev-tools/
+// quake3_fork/supervisor/index.js (a wholly separate repo/deploy).
+const QUAKE3_MAPS = [
+  { id: 'dm4ish', label: 'DM4ish' },
+  { id: 'dm6ish', label: 'DM6ish' },
+  { id: 'oa_dm1', label: 'OA DM1' },
+  { id: 'oa_dm2', label: 'OA DM2' },
+  { id: 'oa_dm3', label: 'OA DM3' },
+  { id: 'oa_dm4', label: 'OA DM4' },
+  { id: 'oa_dm5', label: 'OA DM5' },
+  { id: 'oa_dm6', label: 'OA DM6' },
+  { id: 'oa_dm7', label: 'OA DM7' },
+];
+// Real g_gametype integers, confirmed against the actual engine source
+// (oa_gamelogic/code/game/bg_public.h's gametype_t enum — GT_FFA=0,
+// GT_TEAM=3), not guessed. Deliberately only these two for v1: CTF/other
+// objective modes need CTF-capable maps (flag spawns etc.), coupling
+// map+gametype validity together in a way FFA/TDM never do — a natural
+// later extension once these two are proven live, not a blocker now.
+const QUAKE3_GAMETYPES = [
+  { id: 0, label: 'Free For All' },
+  { id: 3, label: 'Team Deathmatch' },
+];
+
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 
 export default function GameLobbyModal({
@@ -709,6 +744,8 @@ export default function GameLobbyModal({
   const [isTournamentMode, setIsTournamentMode] = useState(false);
   const [noWalls, setNoWalls] = useState(false);
   // const [rampRushFormat, setRampRushFormat] = useState('best_of_5'); // ramp_rush temporarily removed
+  const [quake3Map, setQuake3Map] = useState('dm4ish');
+  const [quake3Gametype, setQuake3Gametype] = useState(0);
   const [isLandscape, setIsLandscape] = useState(
     typeof window !== 'undefined' ? window.matchMedia('(orientation: landscape)').matches : false
   );
@@ -980,7 +1017,9 @@ export default function GameLobbyModal({
     const gameOptions = selectedGame === 'ping_pong'
       ? { no_walls: noWalls }
       // ramp_rush temporarily removed: : selectedGame === 'ramp_rush' ? { format: rampRushFormat }
-      : {};
+      : selectedGame === 'quake3'
+        ? { map: quake3Map, gametype: quake3Gametype }
+        : {};
     onStartGame(selectedGame, buildPlayersData(), gameOptions);
     onClose();
   };
@@ -1303,6 +1342,30 @@ export default function GameLobbyModal({
                         />
                         <span className="text-xs text-gray-300 font-medium">No walls (classic table-tennis rules)</span>
                       </label>
+                    </div>
+                  )}
+                  {!readOnly && selectedGame === 'quake3' && (
+                    <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                      <select
+                        value={quake3Map}
+                        onChange={e => setQuake3Map(e.target.value)}
+                        className="bg-gray-800 border border-gray-600 text-gray-200 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-purple-500"
+                        title="Stage"
+                      >
+                        {QUAKE3_MAPS.map(m => (
+                          <option key={m.id} value={m.id}>{m.label}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={quake3Gametype}
+                        onChange={e => setQuake3Gametype(Number(e.target.value))}
+                        className="bg-gray-800 border border-gray-600 text-gray-200 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-purple-500"
+                        title="Game Mode"
+                      >
+                        {QUAKE3_GAMETYPES.map(g => (
+                          <option key={g.id} value={g.id}>{g.label}</option>
+                        ))}
+                      </select>
                     </div>
                   )}
                   {/* ramp_rush format picker temporarily removed

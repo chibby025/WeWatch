@@ -520,6 +520,7 @@ function GameOverlayInner({ activeGame, currentUserId, roomId, sessionId, onMove
             onEndGame={onEndGame}
             onPlayAgain={onPlayAgain}
             isHost={activeGame.host_id === currentUserId}
+            gameState={activeGame.game_state}
           />
         </Suspense>
       );

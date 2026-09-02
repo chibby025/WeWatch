@@ -185,6 +185,32 @@ var lowerScoreWinsGameTypes = map[string]bool{
 	"golf": true,
 }
 
+// quake3AllowedMaps — never trust a client-supplied map name directly: it
+// eventually becomes a real `+map <name>` command-line argument to a real
+// dedicated server process (~/dev-tools/quake3_fork/supervisor/index.js),
+// and a bad/missing name would crash or hang that process. A curated
+// subset of the 47 real maps confirmed present in the supervisor's own
+// asset pack (`unzip -l pak1-maps.pk3`) — OpenArena's own flagship
+// oa_dm1-7 set plus the dm4ish/dm6ish pair already used as the (until
+// now, hardcoded) default. Kept in sync BY HAND with the identical list
+// in frontend/src/components/Games/GameLobbyModal.jsx (QUAKE3_MAPS) and
+// ~/dev-tools/quake3_fork/supervisor/index.js (which does its own,
+// independent validation too — defense in depth, not "the frontend
+// already checked this").
+var quake3AllowedMaps = map[string]bool{
+	"dm4ish": true, "dm6ish": true,
+	"oa_dm1": true, "oa_dm2": true, "oa_dm3": true, "oa_dm4": true,
+	"oa_dm5": true, "oa_dm6": true, "oa_dm7": true,
+}
+
+// quake3AllowedGametypes — real g_gametype integers confirmed against the
+// engine source (oa_gamelogic/code/game/bg_public.h's gametype_t enum:
+// GT_FFA=0, GT_TEAM=3), matching QUAKE3_GAMETYPES in GameLobbyModal.jsx.
+var quake3AllowedGametypes = map[int]bool{
+	0: true, // GT_FFA
+	3: true, // GT_TEAM
+}
+
 type GameWebSocketHandler struct {
 	gameManager *GameManager
 	db          *gorm.DB
@@ -558,6 +584,27 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
 			}
 			gameStateBcast["no_walls"] = true
 		}
+	}
+	if gameType == "quake3" {
+		// Never trust the client value directly (see quake3AllowedMaps'
+		// own doc comment) — fall back to the same default that used to be
+		// unconditionally hardcoded in the supervisor before this feature.
+		mapName, _ := data["map"].(string)
+		if !quake3AllowedMaps[mapName] {
+			mapName = "dm4ish"
+		}
+		gametype := 0
+		if gt, ok := data["gametype"].(float64); ok && quake3AllowedGametypes[int(gt)] {
+			gametype = int(gt)
+		}
+		if gs, exists := h.gameManager.GetActiveGame(roomID); exists {
+			gs.GameData["map"] = mapName
+			gs.GameData["gametype"] = gametype
+			gs.GameSession.GameState["map"] = mapName
+			gs.GameSession.GameState["gametype"] = gametype
+		}
+		gameStateBcast["map"] = mapName
+		gameStateBcast["gametype"] = gametype
 	}
 	// ramp_rush temporarily removed:
 	// if gameType == "ramp_rush" {

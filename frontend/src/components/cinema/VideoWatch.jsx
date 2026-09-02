@@ -1276,6 +1276,22 @@ export default function VideoWatch() {
   // by game_lobby_browsing WS broadcasts, never opened/closed locally by them.
   const [hostGameLobbyBrowsing, setHostGameLobbyBrowsing] = useState({ isOpen: false, gameType: null });
   const [activeGame, setActiveGame] = useState(null); // Currently active game session
+  // Genuine N-player multiplayer games with no host/spectator split (real
+  // multiplayer clients embedded via iframe — currently just Quake Death
+  // Match) force the SAME full overlay open for every connected room
+  // member the instant anyone starts one, including whoever was just
+  // watching the video with no intention of playing — there's no partial
+  // "spectator" view, only the full live game or nothing. That's a real,
+  // confirmed UX cost (a live multiplayer connection + a genuinely large
+  // asset download start immediately in every member's own browser) worth
+  // gating behind an explicit choice for anyone who didn't start it
+  // themselves. `null` = undecided (show the prompt), 'joined' = render
+  // the real GameOverlay/heavy iframe, 'declined' = stay on the video,
+  // with a small persistent pill to change their mind later. Easy to
+  // extend to future heavy-iframe multiplayer games (e.g. if Micro Racing
+  // or Obby Parkour are ever reinstated) by adding to the set below.
+  const HEAVY_JOIN_PROMPT_GAME_TYPES = useMemo(() => new Set(['quake3']), []);
+  const [heavyGameJoinDecision, setHeavyGameJoinDecision] = useState(null);
   // Card games only: this client's own hand, delivered via a private hand_update
   // message (never broadcast in game_state — every other player's hand and the
   // draw pile order must stay server-side-only). Reset whenever activeGame clears.
@@ -1419,6 +1435,44 @@ export default function VideoWatch() {
     const hostId = hostIdFromState || sessionStatus?.hostId || roomHostId;
     return roomMembers.find(m => Number(m.id) === Number(hostId))?.username || 'The host';
   }, [hostIdFromState, sessionStatus?.hostId, roomHostId, roomMembers]);
+
+  // Whoever actually clicked "Start" on THIS game — activeGame.host_id is
+  // set server-side from the start_game caller's own connection
+  // (handleGameStart in websocket_handler.go: `hostID := cf.GetUserID()`),
+  // which for a `type: 'multiplayer'` game like Quake Death Match can be
+  // any room member, not necessarily this room's actual host. Deliberately
+  // a separate resolver from currentHostName above (that one answers "who
+  // hosts this watch session", a different question entirely).
+  const heavyGameStarterName = React.useMemo(() => {
+    if (!activeGame) return 'Someone';
+    return roomMembers.find(m => Number(m.id) === Number(activeGame.host_id))?.username || 'Someone';
+  }, [activeGame, roomMembers]);
+
+  // Reset the join/decline choice for every genuinely new game session, and
+  // auto-join without prompting whoever just started it themselves — showing
+  // the person who clicked Start their own "do you want to join?" prompt
+  // would be pure friction, they already made that choice by starting it.
+  useEffect(() => {
+    if (!activeGame) {
+      setHeavyGameJoinDecision(null);
+      return;
+    }
+    if (!HEAVY_JOIN_PROMPT_GAME_TYPES.has(activeGame.game_type)) return;
+    if (activeGame.host_id === currentUser?.id) {
+      setHeavyGameJoinDecision('joined');
+    } else {
+      setHeavyGameJoinDecision(null);
+    }
+    // Deliberately keyed on game_session_id, not the whole activeGame object
+    // (which changes reference on every routine WS state update) — this
+    // should only ever re-run when a genuinely new game session begins.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGame?.game_session_id]);
+
+  const isHeavyJoinGame = !!(activeGame && HEAVY_JOIN_PROMPT_GAME_TYPES.has(activeGame.game_type));
+  const showHeavyGameOverlay = !!(activeGame && (!isHeavyJoinGame || heavyGameJoinDecision === 'joined'));
+  const showHeavyGameJoinPrompt = isHeavyJoinGame && heavyGameJoinDecision === null;
+  const showHeavyGameJoinPill = isHeavyJoinGame && heavyGameJoinDecision === 'declined';
 
   // 🛡️ Determine if current user is a room admin
   const isAdmin = React.useMemo(() => {
@@ -9148,7 +9202,48 @@ export default function VideoWatch() {
         />
       )}
 
-      {activeGame && (
+      {showHeavyGameJoinPrompt && (
+        <div className="fixed inset-0 z-[180] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="bg-gray-900 border border-white/10 rounded-2xl shadow-2xl p-6 max-w-sm w-full text-center">
+            <div className="text-4xl mb-3">🎮</div>
+            <h3 className="text-lg font-semibold text-white mb-1">
+              {heavyGameStarterName} started Quake Death Match
+            </h3>
+            <p className="text-sm text-gray-400 mb-5">
+              It's a real, live multiplayer match — joining downloads the game
+              in your browser. You can keep watching instead and join later if
+              you change your mind.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setHeavyGameJoinDecision('declined')}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm font-medium transition-colors"
+              >
+                Keep Watching
+              </button>
+              <button
+                onClick={() => setHeavyGameJoinDecision('joined')}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-semibold transition-colors"
+              >
+                Join
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showHeavyGameJoinPill && (
+        <button
+          onClick={() => setHeavyGameJoinDecision('joined')}
+          className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[180] flex items-center gap-2 px-4 py-2 rounded-full bg-purple-600/90 hover:bg-purple-600 text-white text-sm font-medium shadow-lg backdrop-blur-sm transition-colors"
+          title="Join the live Quake Death Match"
+        >
+          <span>🎮</span>
+          <span>Quake Death Match is live — Join</span>
+        </button>
+      )}
+
+      {showHeavyGameOverlay && (
         <GameOverlay
           activeGame={activeGame}
           currentUserId={currentUser?.id}

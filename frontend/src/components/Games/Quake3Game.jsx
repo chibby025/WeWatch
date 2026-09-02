@@ -642,7 +642,7 @@ function sanitizeQuake3Name(raw) {
   return cleaned || 'Player';
 }
 
-export default function Quake3Game({ roomId, onClose, onEndGame, isHost }) {
+export default function Quake3Game({ roomId, onClose, onEndGame, isHost, gameState }) {
   const { currentUser } = useAuth();
   const [loaded, setLoaded] = useState(false);
   // `loaded` only means the iframe's own HTML finished parsing -- near-
@@ -663,7 +663,19 @@ export default function Quake3Game({ roomId, onClose, onEndGame, isHost }) {
   const [showControls, setShowControls] = useState(false);
   const iframeRef = useRef(null);
 
-  const wsUrl = `${QUAKE3_SUPERVISOR_WS}/?room=${encodeURIComponent(roomId)}`;
+  // map/gametype come from the game_started/game_state broadcast every
+  // room member receives identically (GameLobbyModal's stage picker ->
+  // websocket_handler.go's quake3 branch) -- passed straight through here
+  // rather than re-decided per client, so every connecting player's
+  // dedicated-server request agrees on the same values. Already validated
+  // server-side against quake3AllowedMaps/quake3AllowedGametypes before
+  // reaching this broadcast, but the supervisor still re-validates
+  // independently (defense in depth, not "the backend already checked
+  // this") -- these safe string/number defaults just mirror what an
+  // absent/pre-feature game_state would look like.
+  const quake3Map = gameState?.map || 'dm4ish';
+  const quake3Gametype = gameState?.gametype ?? 0;
+  const wsUrl = `${QUAKE3_SUPERVISOR_WS}/?room=${encodeURIComponent(roomId)}&map=${encodeURIComponent(quake3Map)}&gametype=${encodeURIComponent(quake3Gametype)}`;
   const playerName = sanitizeQuake3Name(currentUser?.username);
   // The engine needs a syntactically valid `\connect <addr>` argument to
   // actually initiate its connect flow -- the real transport target is
