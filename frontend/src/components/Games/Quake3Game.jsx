@@ -291,7 +291,62 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       built, every match always loads the same single map. A real,
 //       missing feature, not a bug -- flagged for a decision on whether
 //       to build it, not fixed here.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v13/index.html`;
+//   v14 Real user's v13 retest showed: the sky/wireframe fix confirmed
+//       working, but items/collectibles didn't render well and some
+//       shooting animations seemed missing, with the NULL-poly-shader
+//       spam still continuing at the same sustained rate. Root-caused
+//       (not guessed) via three separate investigative steps:
+//       1. The v13 weapon-fx fix targeted one-shot muzzle-flash/
+//          explosion effects, but the sustained ~230/sec spam rate never
+//          matched that (bursty, tied to actual shots) -- it matches
+//          PERSISTENT bullet/burn/plasma impact-decal marks instead,
+//          which get re-added to the scene every single frame for their
+//          ~10s lifetime (cg_marks.c) once created. gfx/damage/
+//          bullet_mrk/burn_med_mrk/plasma_mrk had zero shader definition
+//          anywhere in the curated pack.
+//       2. Checking item pickups (bg_itemlist in bg_misc.c) against the
+//          curated pack found a much bigger, systemic gap: 41 item
+//          MODELS (.md3 files -- health, armor, ammo, every weapon
+//          pickup, every powerup, holdables) were completely absent, not
+//          just missing textures.
+//       3. Both root-caused to the SAME underlying cause: this project's
+//          curated OpenArena asset pack starts at pak1 -- it never
+//          included pak0.pk3, the foundational base data every standard
+//          OpenArena install ships. Confirmed via a real, official
+//          Ubuntu-repo openarena-data package download that pak0 alone
+//          resolves 37 of 41 missing item models, all 8 missing item
+//          icons, all 3 impact-mark textures, the real (non-blueish)
+//          menu-art widgets (making the earlier v10 alias-shader fix
+//          fully redundant -- removed), and most of v13's own weapon-fx
+//          textures (68 of 100, also removed to let the real pak0
+//          assets show instead of shadowing them with cruder
+//          placeholders). Added pak0.pk3 (~39MB) to the curated set.
+//       Still synthesized (pak0 doesn't cover everything): 32 weapon-fx
+//       textures, and the sky-shader fix (kept as-is over switching to
+//       pak0's own hellsky definition, which is itself incomplete --
+//       missing its cloud overlay texture -- while the existing
+//       substitute is already confirmed working). 4 minor secondary
+//       decorative item sub-models (spinning rings/orbiting spheres, not
+//       the primary item shape) remain unfixed -- low-priority, cosmetic
+//       only, not attempted (a binary 3D model format, unlike a flat
+//       texture, for a purely decorative accent).
+//       Critically, the SUPERVISOR (a separate Railway deploy, not this
+//       CDN client) was updated in lockstep -- sv_pure requires the
+//       server's own pak list to exactly match the client's, so adding
+//       pak0 client-side alone would have broken every new connection
+//       with a pure-server pak mismatch, not just left content missing.
+//       Also hit and fixed, on the supervisor side specifically, the
+//       exact same class of stuck-BunnyCDN-edge-cache issue already
+//       documented for the client's own assets/manifest.json (v10->v11)
+//       -- except this time on the supervisor's FIXED, unversioned
+//       bootstrap.js download path, which can't simply be bumped to a
+//       new version number the way the client's checksum-addressed
+//       assets can. Moved to a new path (baseoa -> baseoa-v2) instead,
+//       confirmed fixed via railway logs scoped to the exact deployment
+//       ID (an unscoped `railway logs` call was found to show stale,
+//       historical output from a previous deployment -- a real CLI
+//       gotcha, not a second cache bug).
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v14/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
