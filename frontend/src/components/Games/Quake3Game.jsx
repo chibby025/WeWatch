@@ -392,7 +392,26 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       the browser's own WebGL uploads to settle), with a 25s fallback
 //       timeout so a genuine connect failure can't leave a user stuck
 //       behind the spinner forever.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v15/index.html`;
+//   v16 REVERTED v15's R_DrawElements rendering-path change. Real user's
+//       v15 retest confirmed it did fix the lava-area slowdown, but
+//       caused genuine visual distortion on guns/weapons/ammo/arena
+//       geometry -- a real correctness regression, not acceptable. Root
+//       cause is almost certainly Emscripten's own client-side-vertex-
+//       array emulation for the batched glDrawElements path, which the
+//       engine's own boot log has been explicitly flagging as fragile
+//       this entire investigation ("using emscripten GL immediate mode
+//       emulation. This is very limited in what it supports") -- the
+//       slower, individually-called path (glColor4ubv/glTexCoord2fv/
+//       glVertex3fv) has been correct throughout, the batched one
+//       clearly is not. Reverted tr_shade.c's R_DrawElements back to its
+//       original heuristic exactly. The loading-screen extension from
+//       v15 (CL_InitCGame-gated, masks the initial pink-hue texture
+//       warm-up) is untouched -- pure frontend/React, no connection to
+//       engine rendering, no reason to revert.
+//       r_primitives stays a live, runtime-settable cvar (no rebuild
+//       needed) for testing this specific tradeoff directly from the
+//       in-game console if wanted later.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v16/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
