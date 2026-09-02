@@ -450,7 +450,38 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       every-room-spawn URL shape that already needed one cache-escape
 //       bump once before) rather than risk hitting the same stuck-edge-
 //       cache issue on a path that's had real traffic since v14.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v17/index.html`;
+//   v18 User chose to actually root-cause why the v15 batched-rendering
+//       attempt broke correctness, rather than accept the slower path
+//       permanently. Found it by directly reading Emscripten's own SDK
+//       source (src/lib/libglemu.js glDrawElements), not guessing: two
+//       real, compounding bugs in its client-side-vertex-array
+//       emulation, both specific to a caller with no bound element
+//       array buffer using 32-bit (GL_UNSIGNED_INT) indices -- exactly
+//       this engine's own calling pattern (GL_INDEX_TYPE is
+//       GL_UNSIGNED_INT, tr_local.h). (1) Every downstream site in that
+//       function hardcodes 16-bit index reads/uploads regardless of the
+//       real index width -- confirmed by the function's own assertion
+//       ("We can only emulate buffers of this kind, for now"), silently
+//       compiled out in a release/ASSERTIONS=0 build instead of ever
+//       catching the mismatch -- silently corrupting which vertex every
+//       triangle actually references. (2) prepareClientAttributes() is
+//       called using the INDEX count as if it were the VERTEX count,
+//       over-reading client-array memory past the real vertex data for
+//       any indexed/vertex-sharing geometry (virtually all of it),
+//       pulling in adjacent WASM heap bytes as if they were valid
+//       color/texcoord/position data. Both are the confirmed root cause
+//       of v15's distortion. Fixed directly in the Emscripten SDK
+//       source this build compiles against (not a post-build patch on
+//       minified output -- a real source edit, rebuilt through the
+//       normal pipeline for correct integration): convert the real
+//       index buffer to a genuine 16-bit one and compute the true
+//       vertex count, once, at glDrawElements's own entry point, then
+//       let every line of existing logic run completely unmodified
+//       against these corrected inputs. Re-enabled the same
+//       primitives=2 override tr_shade.c had in v15 (this time with the
+//       actual bug fixed, not just avoided) -- v16/v17's revert is
+//       superseded, not layered on top of.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v18/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
