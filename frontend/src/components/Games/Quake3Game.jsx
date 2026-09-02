@@ -411,7 +411,46 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       r_primitives stays a live, runtime-settable cvar (no rebuild
 //       needed) for testing this specific tradeoff directly from the
 //       in-game console if wanted later.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v16/index.html`;
+//   v17 Real user's v16 retest confirmed the distortion was gone (revert
+//       worked cleanly), but confirmed the lava-area slowdown is
+//       unrelated to overall scene complexity -- tried cg_drawGun 0 /
+//       r_lodbias 2 / r_picmip 2 (reducing weapon-model/player-model/
+//       texture-detail geometry) and the slowdown near lava was
+//       identical, isolating it squarely to that one surface's own
+//       rendering cost. Investigated its actual shader definition
+//       (textures/liquids/lavahell) directly rather than guess further:
+//       cull disable (double-sided, 2x triangles) + 3 full additive
+//       stages (each re-runs the entire slow per-vertex JS-bridge draw
+//       path over the same geometry -- confirmed unavoidable, since the
+//       fast batched glDrawElements path is unsafe for correctness on
+//       this platform, per v15/v16's own history) + a finely-tessellated
+//       (tessSize 128) per-vertex CPU wave deformation + per-stage
+//       per-vertex texture turbulence (tcMod turb), 3x over. Genuinely
+//       one of the most expensive shader shapes in the whole Q3
+//       vocabulary, fully explaining why it's isolated to this one
+//       surface and unaffected by general-geometry cvars (none of them
+//       touch this surface's own shader script at all -- r_subdivisions
+//       in particular doesn't even apply here; tessSize is a completely
+//       separate, shader-specific mechanism for deformVertexes surfaces).
+//       Fixed with a lighter override for this one shader (pak8-oa-vm.pk3,
+//       scripts/lava_perf_fix.shader): cull disable -> cull back (halves
+//       triangle count), tessSize 128 -> 256 (roughly halves the wave-
+//       deform vertex density), 3 additive stages -> 1 (the biggest
+//       single win -- removes 2 full extra per-vertex JS-bridge passes
+//       over the whole surface). All gameplay-relevant surfaceparms
+//       (lava/fog/water/etc) and the deformVertexes wave itself (the
+//       actual "waving lava" visual signature) are unchanged -- a real,
+//       honest tradeoff of some of the layered glow/turbulence richness
+//       for real speed where it was actually the confirmed bottleneck,
+//       not a correctness change like v15's reverted attempt.
+//       The Railway-hosted supervisor (separate deploy) was updated in
+//       lockstep to the same pak8 -- sv_pure requires an exact server/
+//       client pak match. Its own CDN path was also bumped preemptively
+//       (baseoa-v2 -> baseoa-v3, the same un-checksummed, fetched-on-
+//       every-room-spawn URL shape that already needed one cache-escape
+//       bump once before) rather than risk hitting the same stuck-edge-
+//       cache issue on a path that's had real traffic since v14.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v17/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
