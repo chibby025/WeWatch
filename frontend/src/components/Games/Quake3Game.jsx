@@ -10,6 +10,7 @@
 // integration's pattern rather than DOOM's.
 import { useEffect, useRef, useState } from 'react';
 import { X as CloseIcon } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
 
 const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 // v6, not v1-v5 -- each fixed a real, separate connect-hang or rendering
@@ -248,7 +249,49 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       verification moments earlier and could plausibly have started
 //       caching on its own, same class of risk this whole v11 fix was
 //       about avoiding in the first place.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v12/index.html`;
+//   v13 Real user's v12 retest surfaced 4 more real issues in one pass:
+//       (1) more weapons render now (a side effect of texture fixes
+//       elsewhere), but firing several of them produced errors and the
+//       NULL-poly-shader spam continued (1989x) -- root-caused via a full
+//       shader-script audit (not guessed) to a SYSTEMIC gap: essentially
+//       every weapon's hit/explosion/muzzle-flash shader in this
+//       project's curated asset pack referenced a missing image --
+//       bulletExplosion (8 missing animated frames), rocketExplosion (8),
+//       grenadeExplosion, bfgExplosion, plasmaExplosion, railExplosion,
+//       every muzzle flash, plus the weapon models' own body/skin
+//       textures -- ~100 missing files total. Fixed by synthesizing real
+//       placeholder art (radial burst/spark, streak, flat metal-tile
+//       generators, thematically colored per weapon) for every one,
+//       added to pak8-oa-vm.pk3.
+//       (2) "top roof... missing, showing wireframes" -- root-caused by
+//       strings-scanning dm4ish's own compiled BSP for its shader names
+//       and cross-checking each: textures/skies/hellsky (this map's own
+//       sky/ceiling surface) has NO shader definition and no fallback
+//       image anywhere in the curated pack -- sky surfaces render through
+//       a dedicated code path (R_AddSkySurface) that shows a hole/
+//       wireframe rather than a checkerboard default when totally
+//       unresolvable. Fixed with a real skyparms shader definition
+//       reusing env/sky1/sky001 -- a complete, real, already-present
+//       6-face skybox used correctly elsewhere in this same pack.
+//       (3) "unnamed players" -- default.cfg hardcodes every connecting
+//       player's name to the literal string "Player", making every real
+//       WeWatch user in a match visually indistinguishable. Fixed
+//       client-side: sanitizes the real logged-in username (alphanumeric/
+//       underscore/hyphen only, capped length -- this reaches a genuine
+//       Q3 console-command parser, so unsanitized input would be a real
+//       command-injection surface, not just a cosmetic risk) and appends
+//       it as a `name%20<value>` query-command segment, verified via a
+//       standalone Node simulation of client_index.html's own
+//       getQueryCommands() parser to confirm it produces the correct
+//       `+name <value>` command with no interference from the existing
+//       `?wsurl=`/`&connect%20x:1` segments.
+//       (4) "I thought we get to select the stages before a game starts"
+//       -- confirmed via the supervisor's own spawn args
+//       (`+map dm4ish`, hardcoded): map/arena selection has never been
+//       built, every match always loads the same single map. A real,
+//       missing feature, not a bug -- flagged for a decision on whether
+//       to build it, not fixed here.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v13/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
@@ -266,17 +309,42 @@ const QUAKE3_SUPERVISOR_WS = 'wss://quake3-supervisor-production.up.railway.app'
 // actually going to render, not a screen-width guess.
 const isMobileDevice = () => ('ontouchstart' in window) && navigator.maxTouchPoints > 0;
 
+// client_index.html's getQueryCommands() turns each query-string KEY
+// (not a real key=value pair -- a deliberately custom scheme) into a raw
+// console command: it decodes the key, splits on spaces, and prepends
+// '+' to the first token -- e.g. `?name%20Alice` becomes the startup arg
+// `+name Alice`, which Q3's own console dispatcher (Cmd_ExecuteString ->
+// Cvar_Command fallback) treats exactly like typing `name Alice` at the
+// console, correctly setting the `name` cvar. Since that splitter has no
+// concept of quoting, a raw username containing a space would silently
+// turn into extra, wrong tokens -- and since this reaches a real
+// console-command parser, an unsanitized name is also a genuine command-
+// injection surface (Q3 console syntax uses `;` to chain commands). Strip
+// down to a single safe alphanumeric/underscore/hyphen token, matching Q3's
+// own MAX_NAME_LENGTH-ish sanity bound, with a generic fallback if that
+// leaves nothing usable.
+function sanitizeQuake3Name(raw) {
+  const cleaned = (raw || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24);
+  return cleaned || 'Player';
+}
+
 export default function Quake3Game({ roomId, onClose, onEndGame, isHost }) {
+  const { currentUser } = useAuth();
   const [loaded, setLoaded] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const iframeRef = useRef(null);
 
   const wsUrl = `${QUAKE3_SUPERVISOR_WS}/?room=${encodeURIComponent(roomId)}`;
+  const playerName = sanitizeQuake3Name(currentUser?.username);
   // The engine needs a syntactically valid `\connect <addr>` argument to
   // actually initiate its connect flow -- the real transport target is
   // already fixed via ?wsurl=, so this address itself is never used for
-  // anything beyond satisfying that parse.
-  const quake3Url = `${QUAKE3_CLIENT_URL}?wsurl=${encodeURIComponent(wsUrl)}&connect%20x:1`;
+  // anything beyond satisfying that parse. `name%20<player>` sets each
+  // real WeWatch user's actual name in-game (default.cfg previously
+  // hardcoded every connecting player to the literal name "Player",
+  // making every participant in a match visually indistinguishable --
+  // a real, confirmed gap, not a hypothetical one).
+  const quake3Url = `${QUAKE3_CLIENT_URL}?wsurl=${encodeURIComponent(wsUrl)}&connect%20x:1&name%20${encodeURIComponent(playerName)}`;
 
   useEffect(() => {
     if (loaded && !isMobileDevice()) setShowControls(true);
