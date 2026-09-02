@@ -514,7 +514,45 @@ const QUAKE3_ORIGIN = 'https://letswatchout.b-cdn.net';
 //       the resulting compiled output no longer contains the "canSkip"
 //       logic that flag used to compile in, and that v18's own index-
 //       conversion fix is still present unchanged.
-const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v19/index.html`;
+//   v20 Real user's v19 retest: the stretching/seams were still there --
+//       GL_UNSAFE_OPTS was a real, plausible theory but confirmed NOT the
+//       (or the sole) cause. Got a live screenshot of the actual bug via
+//       a headless Playwright session hitting the real deployed client +
+//       supervisor (not guessed): a bright white streak stretched from
+//       the gun clear across the screen, a similar red streak on the
+//       right, pink patches on the ceiling -- classic "triangle
+//       referencing a vertex from an unrelated part of the scene"
+//       corruption. Also checked the "[TEXTURE MISSING] majorlegs/
+//       majortorso" console lines the user separately flagged -- traced
+//       through the actual cgame source (CG_RegisterClientSkin) and
+//       confirmed these are near-certainly harmless: every Q3 model has
+//       placeholder shader names baked in at export time as a load-time
+//       fallback, warned about regardless of whether the real .skin file
+//       (the thing that actually matters) loaded fine -- no "skin load
+//       failure" was printed, which is the message that fires on a
+//       genuine failure. Not the cause of the visible corruption.
+//       Got a decisive, controlled A/B via URL-injected `+set
+//       r_primitives 1/2` (sidesteps the user's separate "can't type
+//       underscore in console" bug entirely) against the same map/
+//       connection: r_primitives=2 (the batched path, forced on by v18)
+//       reproduces the corruption every time; r_primitives=1 (the
+//       original safe per-vertex path) is completely clean every time.
+//       So v18's SDK fix (32-bit index conversion) was real and
+//       necessary but not sufficient -- there's still at least one more
+//       bug in the batched-draw emulation path, not yet root-caused.
+//       Reverted tr_shade.c's EMSCRIPTEN override (back to the original
+//       heuristic, which always resolves to primitives=1 here since
+//       qglLockArraysEXT never binds on this platform) rather than keep
+//       hunting for the second bug with a known-corrupted path live in
+//       production -- same principle as the original v15->v16 revert
+//       earlier in this investigation. The lava-area slowdown that
+//       originally motivated forcing primitives=2 was already fixed
+//       independently in v17 (a lighter shader script, unrelated to
+//       r_primitives) and is unaffected by this revert. Kept the
+//       libglemu.js SDK-level index-conversion fix in place either way
+//       -- it's correct, independent groundwork for whoever picks the
+//       batched-path investigation back up.
+const QUAKE3_CLIENT_URL = `${QUAKE3_ORIGIN}/games/quake3/v20/index.html`;
 // Only messages carrying this exact source tag, from exactly this CDN
 // origin, are ever trusted -- same split already established for DOOM's
 // relay bridge (validate on the receiving end, since the shell page posts
