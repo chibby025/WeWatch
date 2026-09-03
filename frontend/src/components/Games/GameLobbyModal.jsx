@@ -1,6 +1,7 @@
 // src/components/Games/GameLobbyModal.jsx
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { X, Gamepad2, Users, ChevronLeft, ChevronRight, Search, Trophy, AlertTriangle } from 'lucide-react';
+import { QUAKE3_MAPS, QUAKE3_GAMETYPES } from './quake3Constants';
 
 // Posters live on BunnyCDN, not bundled into the frontend package — same CDN origin
 // DoomGame.jsx already hardcodes for its own assets. Keeps the
@@ -690,41 +691,6 @@ const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'con
 // backend-side via lowerScoreWinsGameTypes in websocket_handler.go).
 const HOT_SEAT_GAME_IDS = ['fowl_play', 'toad_ball', 'rhythm_hero', 'slice_frenzy']; // skeeball/golf removed here too — temporarily disabled
 
-// Quake Death Match — stage & game-mode selection. A curated subset of the
-// 47 real maps bundled in the supervisor's own asset pack (confirmed
-// present via `unzip -l pak1-maps.pk3`, not guessed) — OpenArena's own
-// flagship oa_dm1-7 deathmatch set, plus the dm4ish/dm6ish pair already
-// used as the (until now, hardcoded) default. Deliberately NOT the full
-// 47 — most of the rest are obscure community maps never verified to play
-// well, and this list only needs to grow, never shrink, without breaking
-// anyone's saved state (map id is just a string, sent fresh every game).
-// Kept in sync BY HAND with the identical allowlist in two other places
-// this can't share code with: backend/internal/handlers/games/
-// websocket_handler.go (server-side validation, since a client value is
-// never trusted directly for a spawn argument) and ~/dev-tools/
-// quake3_fork/supervisor/index.js (a wholly separate repo/deploy).
-const QUAKE3_MAPS = [
-  { id: 'dm4ish', label: 'DM4ish' },
-  { id: 'dm6ish', label: 'DM6ish' },
-  { id: 'oa_dm1', label: 'OA DM1' },
-  { id: 'oa_dm2', label: 'OA DM2' },
-  { id: 'oa_dm3', label: 'OA DM3' },
-  { id: 'oa_dm4', label: 'OA DM4' },
-  { id: 'oa_dm5', label: 'OA DM5' },
-  { id: 'oa_dm6', label: 'OA DM6' },
-  { id: 'oa_dm7', label: 'OA DM7' },
-];
-// Real g_gametype integers, confirmed against the actual engine source
-// (oa_gamelogic/code/game/bg_public.h's gametype_t enum — GT_FFA=0,
-// GT_TEAM=3), not guessed. Deliberately only these two for v1: CTF/other
-// objective modes need CTF-capable maps (flag spawns etc.), coupling
-// map+gametype validity together in a way FFA/TDM never do — a natural
-// later extension once these two are proven live, not a blocker now.
-const QUAKE3_GAMETYPES = [
-  { id: 0, label: 'Free For All' },
-  { id: 3, label: 'Team Deathmatch' },
-];
-
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 
 export default function GameLobbyModal({
@@ -736,7 +702,7 @@ export default function GameLobbyModal({
   // local navigation of its own. onCarouselChange is the host-side counterpart:
   // called whenever the *host's* own carouselIndex settles on a new game, so
   // the parent can broadcast it.
-  readOnly = false, syncedGameId = null, hostName = 'The host', onCarouselChange,
+  readOnly = false, syncedGameId = null, syncedGameOptions = null, hostName = 'The host', onCarouselChange,
 }) {
   const [selectedPlayers, setSelectedPlayers] = useState([currentUserId]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -786,6 +752,17 @@ export default function GameLobbyModal({
   const selectedGameData = filteredGames[carouselIndex] || null;
   const selectedGame = selectedGameData?.id ?? null;
 
+  // Single source of truth for "what would Start Game actually send right
+  // now" — used both by handleStartGame itself and by the live
+  // broadcast-to-the-room effect below, so the two can never drift apart.
+  const currentGameOptions = useMemo(() => (
+    selectedGame === 'ping_pong'
+      ? { no_walls: noWalls }
+      : selectedGame === 'quake3'
+        ? { map: quake3Map, gametype: quake3Gametype }
+        : {}
+  ), [selectedGame, noWalls, quake3Map, quake3Gametype]);
+
   // Keep the centered card stable across a filter change when it's still present
   // (don't jump away from what the user is looking at just because the filtered
   // list got shorter/longer) -- only reset to the top match when it disappears.
@@ -810,12 +787,20 @@ export default function GameLobbyModal({
     if (idx >= 0) setCarouselIndex(idx);
   }, [readOnly, syncedGameId, filteredGames]);
 
-  // Host mode: tell the parent every time the centered game changes (including
-  // the initial mount) so it can broadcast it to the room over WS.
+  // Host mode: tell the parent every time the centered game changes, OR any
+  // of its live-editable options change (e.g. Quake Death Match's stage/
+  // mode dropdowns), including the initial mount — so it can broadcast a
+  // complete, self-consistent {gameType, gameOptions} snapshot to the room
+  // over WS every time. Always sending the FULL current combination
+  // together (never a partial delta) is deliberate: a separate "carousel
+  // changed" message with no options and a separate "options changed"
+  // message with no game type would race on the receiving end, whichever
+  // arrives second silently clobbering the other's info in
+  // hostGameLobbyBrowsing's plain state replace.
   useEffect(() => {
     if (readOnly || !onCarouselChange) return;
-    onCarouselChange(selectedGame);
-  }, [readOnly, onCarouselChange, selectedGame]);
+    onCarouselChange(selectedGame, currentGameOptions);
+  }, [readOnly, onCarouselChange, selectedGame, currentGameOptions]);
 
   // A no-op in readOnly mode disables every navigation path at once (chevrons,
   // dots, poster taps, touch swipe) — the carousel there is purely a mirror of
@@ -1014,13 +999,7 @@ export default function GameLobbyModal({
       return;
     }
 
-    const gameOptions = selectedGame === 'ping_pong'
-      ? { no_walls: noWalls }
-      // ramp_rush temporarily removed: : selectedGame === 'ramp_rush' ? { format: rampRushFormat }
-      : selectedGame === 'quake3'
-        ? { map: quake3Map, gametype: quake3Gametype }
-        : {};
-    onStartGame(selectedGame, buildPlayersData(), gameOptions);
+    onStartGame(selectedGame, buildPlayersData(), currentGameOptions);
     onClose();
   };
 
@@ -1420,6 +1399,13 @@ export default function GameLobbyModal({
                 <p className={`text-gray-400 ${isLandscape ? 'text-[11px]' : 'text-sm'}`}>
                   Everyone sees this live — chat in to say what you'd like to play!
                 </p>
+                {selectedGame === 'quake3' && syncedGameOptions?.map && (
+                  <p className="text-purple-300 text-xs sm:text-sm mt-2 font-medium">
+                    Stage: {QUAKE3_MAPS.find(m => m.id === syncedGameOptions.map)?.label || syncedGameOptions.map}
+                    {' · '}
+                    Mode: {QUAKE3_GAMETYPES.find(g => g.id === syncedGameOptions.gametype)?.label || 'Free For All'}
+                  </p>
+                )}
               </div>
             ) : selectedGameData.type === 'arcade' && !HOT_SEAT_GAME_IDS.includes(selectedGame) ? (
               /* Non-hot-seat arcade games (doom, space_attack) - single player info */

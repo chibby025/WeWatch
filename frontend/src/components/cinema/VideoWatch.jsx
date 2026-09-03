@@ -46,6 +46,7 @@ import TakeQuizModal from './modals/TakeQuizModal';
 import QuizResultsModal from './modals/QuizResultsModal';
 // Game system components
 import GameLobbyModal from '../Games/GameLobbyModal';
+import { QUAKE3_MAPS, QUAKE3_GAMETYPES } from '../Games/quake3Constants';
 import GameOverlay from '../Games/GameOverlay';
 import GameWinnerBanner from '../Games/GameWinnerBanner';
 import TournamentBracket from '../Games/TournamentBracket';
@@ -1274,7 +1275,7 @@ export default function VideoWatch() {
   const [isGameLobbyOpen, setIsGameLobbyOpen] = useState(false);
   // Non-host members' live mirror of the host's own game picker — driven purely
   // by game_lobby_browsing WS broadcasts, never opened/closed locally by them.
-  const [hostGameLobbyBrowsing, setHostGameLobbyBrowsing] = useState({ isOpen: false, gameType: null });
+  const [hostGameLobbyBrowsing, setHostGameLobbyBrowsing] = useState({ isOpen: false, gameType: null, gameOptions: {} });
   const [activeGame, setActiveGame] = useState(null); // Currently active game session
   // Genuine N-player multiplayer games with no host/spectator split (real
   // multiplayer clients embedded via iframe — currently just Quake Death
@@ -1447,6 +1448,18 @@ export default function VideoWatch() {
     if (!activeGame) return 'Someone';
     return roomMembers.find(m => Number(m.id) === Number(activeGame.host_id))?.username || 'Someone';
   }, [activeGame, roomMembers]);
+
+  // Human-readable "Free For All on DM4ish" line for the join prompt — same
+  // QUAKE3_MAPS/QUAKE3_GAMETYPES label lookup GameLobbyModal's own live
+  // preview already uses, imported rather than duplicated since both live
+  // in this same frontend codebase (unlike the backend Go/supervisor
+  // copies, which genuinely can't share code with this one).
+  const heavyGameStageLabel = React.useMemo(() => {
+    if (!activeGame?.game_state?.map) return null;
+    const mapLabel = QUAKE3_MAPS.find(m => m.id === activeGame.game_state.map)?.label || activeGame.game_state.map;
+    const modeLabel = QUAKE3_GAMETYPES.find(g => g.id === activeGame.game_state.gametype)?.label || 'Free For All';
+    return `${modeLabel} on ${mapLabel}`;
+  }, [activeGame]);
 
   // Reset the join/decline choice for every genuinely new game session, and
   // auto-join without prompting whoever just started it themselves — showing
@@ -2814,11 +2827,16 @@ export default function VideoWatch() {
   }, [isHost]);
 
   // Fired by GameLobbyModal's own onCarouselChange whenever the host's centered
-  // game changes (including the initial mount) — this doubles as the "opened"
+  // game changes OR any of its live-editable per-game options change (e.g.
+  // Quake Death Match's stage/mode dropdowns) — this doubles as the "opened"
   // signal too, since it only ever fires while the modal is mounted/open.
-  const handleGameLobbyCarouselChange = useCallback((gameType) => {
+  // Always includes the FULL current {gameType, gameOptions} snapshot
+  // together (see GameLobbyModal's own comment on this effect) so the
+  // receiving side's plain-state-replace can never end up with a
+  // mismatched/stale combination of the two.
+  const handleGameLobbyCarouselChange = useCallback((gameType, gameOptions) => {
     if (!isHost || !sendMessage) return;
-    sendMessage({ type: 'game_lobby_browsing', data: { is_open: true, game_type: gameType } });
+    sendMessage({ type: 'game_lobby_browsing', data: { is_open: true, game_type: gameType, game_options: gameOptions || {} } });
   }, [isHost, sendMessage]);
 
   // Broadcast the "closed" transition once, covering every way the modal can
@@ -6419,12 +6437,15 @@ export default function VideoWatch() {
           break;
           
         case "game_lobby_browsing":
-          // Host opened/closed or cycled the game picker — mirror it live for
-          // everyone else. The sender (host) never receives their own echo
-          // (backend excludes them), so this only ever runs for other members.
+          // Host opened/closed or cycled the game picker, or changed one of
+          // its live-editable per-game options (e.g. Quake Death Match's
+          // stage/mode) — mirror it live for everyone else. The sender
+          // (host) never receives their own echo (backend excludes them),
+          // so this only ever runs for other members.
           setHostGameLobbyBrowsing({
             isOpen: !!message.data?.is_open,
             gameType: message.data?.game_type || null,
+            gameOptions: message.data?.game_options || {},
           });
           break;
 
@@ -9198,6 +9219,7 @@ export default function VideoWatch() {
           isHost={false}
           readOnly
           syncedGameId={hostGameLobbyBrowsing.gameType}
+          syncedGameOptions={hostGameLobbyBrowsing.gameOptions}
           hostName={currentHostName}
         />
       )}
@@ -9209,6 +9231,9 @@ export default function VideoWatch() {
             <h3 className="text-lg font-semibold text-white mb-1">
               {heavyGameStarterName} started Quake Death Match
             </h3>
+            {heavyGameStageLabel && (
+              <p className="text-purple-300 text-sm font-medium mb-2">{heavyGameStageLabel}</p>
+            )}
             <p className="text-sm text-gray-400 mb-5">
               It's a real, live multiplayer match — joining downloads the game
               in your browser. You can keep watching instead and join later if
