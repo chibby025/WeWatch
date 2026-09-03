@@ -2044,6 +2044,19 @@ export const updateUserSettings = async (settings) => {
   return response.data;
 };
 
+// Multi-select "what do you want to see" content-rating preferences — see
+// ContentRatingPreferencePicker.jsx (the shared UI both OnboardingTour and
+// UserPreferencesModal use) and content_rating_preference_handler.go.
+export const getContentRatingPreferences = async () => {
+  const response = await apiClient.get('/api/user/content-rating-preferences');
+  return response.data;
+};
+
+export const setContentRatingPreferences = async (ratings) => {
+  const response = await apiClient.post('/api/user/content-rating-preferences', { ratings });
+  return response.data;
+};
+
 // ── Lobby Groups ──────────────────────────────────────────────────────────────
 
 export const createLobbyGroup = (name, memberIds) =>

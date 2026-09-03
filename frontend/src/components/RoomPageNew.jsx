@@ -8,6 +8,7 @@ import MentionDropdown from './MentionDropdown';
 import VoiceWaveformIcon from './VoiceWaveformIcon';
 import logger from '../utils/logger';
 import { hasTicketCache } from '../utils/ticketCache';
+import { resolveAvatarUrl, AVATAR_FALLBACK } from '../utils/avatar';
 import {
   ArrowLeftIcon,
   UserIcon,
@@ -59,6 +60,24 @@ import { useChatReadPosition } from '../hooks/useChatReadPosition';
 // Module-level chat cache — survives tab switches and brief navigations away
 // Key: `${roomId}:${groupId||'main'}` → last 50 messages
 const _roomChatCache = new Map();
+
+// Converts the backend's other_read_positions array (see GetRoomMessages /
+// getOtherRoomReadPositions, room_handlers.go) into the { userId: {...} }
+// map shape the "seen by" strip renders from. The array already excludes
+// the requesting user's own position server-side.
+const seedOtherReadPositions = (entries) => {
+  const map = {};
+  (entries || []).forEach((e) => {
+    if (!e || !e.user_id) return;
+    map[e.user_id] = {
+      userId: e.user_id,
+      username: e.username,
+      avatarUrl: e.avatar_url,
+      lastReadMessageId: e.last_read_message_id,
+    };
+  });
+  return map;
+};
 
 // Safe: non-mention segments are HTML-escaped inside parseTwemoji; mention wrapper uses only /\w+/ chars.
 const ChatMessageText = ({ text, className }) => {
@@ -136,6 +155,25 @@ const RoomPageNew = () => {
   // Chat state
   const [messages, setMessages] = useState(() => _roomChatCache.get(`${roomId}:main`) || []);
   const [newMessage, setNewMessage] = useState('');
+  // "Seen by" read receipts (room chat only — see useChatReadPosition/
+  // ChatReadPosition and the backend's other_read_positions/room_read_position
+  // additions). Keyed by user_id: { userId, username, avatarUrl, lastReadMessageId }.
+  // Deliberately never includes the current user's own id (excluded server-side
+  // in the seed fetch, and skipped on live updates below) and is fully
+  // replaced (not merged) on every group switch — a previous group/channel's
+  // positions never leak into a freshly-opened one.
+  const [otherReadPositions, setOtherReadPositions] = useState({});
+  // Members whose furthest-read position has reached the newest loaded
+  // message — the only cluster the "seen by" strip renders (see the design
+  // note above the strip's own JSX for why members still mid-scroll through
+  // history don't get an individual marker in this version).
+  const caughtUpReaders = useMemo(() => {
+    if (!messages.length) return [];
+    const newest = messages[messages.length - 1];
+    const newestId = newest?.id || newest?.ID;
+    if (!newestId) return [];
+    return Object.values(otherReadPositions).filter(p => p.lastReadMessageId >= newestId);
+  }, [messages, otherReadPositions]);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   // Tracks current cache key (roomId:groupId) so WS handlers can update cache without stale closure
@@ -811,6 +849,7 @@ const RoomPageNew = () => {
       const capped = msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs;
       _roomChatCache.set(cacheKey, capped.slice(-50));
       setMessages(capped);
+      setOtherReadPositions(seedOtherReadPositions(response.data.other_read_positions));
       // scrollToLatest: navigating in here fresh from LobbyPage (room card
       // click, "Enter Room", a live-session avatar, a notification, etc. —
       // see LobbyPage.jsx's navigate() calls) should always land on the
@@ -991,6 +1030,7 @@ const RoomPageNew = () => {
       const capped = msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs;
       _roomChatCache.set(cacheKey, capped.slice(-50));
       setMessages(capped);
+      setOtherReadPositions(seedOtherReadPositions(response.data.other_read_positions));
       restoreOrScrollToBottom(cacheKey, capped, response.data.last_read_message_id);
     } catch (err) {
       console.error('Failed to fetch messages:', err);
@@ -1269,6 +1309,38 @@ const RoomPageNew = () => {
             if (alreadyHas) return m;
             return { ...m, reactions: [...existing, { emoji: reactedEmoji, user_id: reactorUserId }] };
           }));
+          break;
+        }
+        case 'room_read_position': {
+          // Live counterpart to other_read_positions (seeded on fetch) — see
+          // broadcastRoomReadPosition, chat_read_position_handler.go. Mirrors
+          // room_chat's own direct selectedGroupId read for group-filtering
+          // (not chatCacheKeyRef) to stay consistent with that established
+          // pattern in this same switch.
+          const posGroupId = message.data?.room_group_id || null;
+          if (selectedGroupId !== posGroupId) break;
+          const readerId = message.data?.user_id;
+          const lastReadMessageId = message.data?.last_read_message_id;
+          if (!readerId || readerId === currentUser?.id || lastReadMessageId == null) break;
+          setOtherReadPositions(prev => {
+            const existing = prev[readerId];
+            if (existing) {
+              return { ...prev, [readerId]: { ...existing, lastReadMessageId } };
+            }
+            // First time seeing this reader this session (e.g. they connected
+            // after our own initial fetch) — look up their display info from
+            // the already-loaded member list rather than waiting on a refetch.
+            const m = members.find(mm => (mm.id || mm.user_id) === readerId);
+            return {
+              ...prev,
+              [readerId]: {
+                userId: readerId,
+                username: m?.username || '',
+                avatarUrl: m?.avatar_url || '',
+                lastReadMessageId,
+              },
+            };
+          });
           break;
         }
         case 'user_joined':
@@ -3291,6 +3363,32 @@ const RoomPageNew = () => {
               </React.Fragment>
             );
           })
+        )}
+        {/* "Seen by" strip — only for the newest message, capped avatars +
+            overflow count. Deliberately not floated per-historical-message:
+            a room can have hundreds of members, so this stays bounded to one
+            line regardless of room size instead of scattering markers
+            through scrollback. See caughtUpReaders/otherReadPositions above. */}
+        {caughtUpReaders.length > 0 && (
+          <div className="flex items-center justify-end gap-1 px-3 pt-0.5 pb-1">
+            <div className="flex -space-x-2">
+              {caughtUpReaders.slice(0, 3).map((r) => (
+                <img
+                  key={r.userId}
+                  src={resolveAvatarUrl(r.avatarUrl)}
+                  alt={r.username || 'Member'}
+                  title={r.username ? `Seen by ${r.username}` : 'Seen'}
+                  className="w-5 h-5 rounded-full border-2 border-gray-900 object-cover"
+                  onError={(e) => { e.target.onerror = null; e.target.src = AVATAR_FALLBACK; }}
+                />
+              ))}
+            </div>
+            {caughtUpReaders.length > 3 && (
+              <span className="text-[10px] text-gray-400 leading-none">
+                +{caughtUpReaders.length - 3}
+              </span>
+            )}
+          </div>
         )}
         <div ref={messagesEndRef} />
 

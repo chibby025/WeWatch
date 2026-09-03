@@ -24,8 +24,18 @@ type UserSettings struct {
 	WhoCanCall          string `gorm:"default:'friends'" json:"who_can_call"`        // 'everyone', 'friends', 'nobody'
 
 	// Content preferences
-	ShowMatureContent bool   `gorm:"default:false" json:"show_mature_content"` // true = skip blur overlay for 18+/Mature posts
-	PrimaryRating     string `gorm:"type:varchar(20);default:''" json:"primary_rating"` // preferred content category for feed ranking: G, PG, Educational, Religious, 13+, 16+, 18+, Mature
+	ShowMatureContent bool `gorm:"default:false" json:"show_mature_content"` // true = skip blur overlay for 18+/Mature posts
+	// PrimaryRating: NOT the user's content preference (see
+	// UserContentRatingPreference for that — a real multi-select include
+	// filter). This is now an auto-derived, single-value nudge: the first
+	// rating a user picked in their multi-select preferences, written as a
+	// side effect of SetContentRatingPreferencesHandler. Used only as a
+	// small secondary ranking signal (feed_algorithm.go's affinityBoost,
+	// community_events_handler.go's CASE-WHEN tie-break) — never a filter on
+	// its own. Also NOT the same value as "Default Session Rating"
+	// (UserPreferencesModal's separate, client-only localStorage control) —
+	// the two are unrelated concepts that happen to both be "one rating."
+	PrimaryRating string `gorm:"type:varchar(20);default:''" json:"primary_rating"`
 
 	// Age-based content visibility flags (computed from date_of_birth, refreshed once per year)
 	// All default false — no age-gated content until DOB is confirmed.

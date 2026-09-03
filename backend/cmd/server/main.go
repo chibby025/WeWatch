@@ -142,7 +142,10 @@ func main() {
 		// Sticker packs (user-created, Telegram imports, community)
 		&models.StickerPack{}, &models.StickerItem{}, &models.UserStickerPack{},
 		// Cross-device chat scroll-resume position (room/dm/group, shared table)
-		&models.ChatReadPosition{})
+		&models.ChatReadPosition{},
+		// Multi-select "what do you want to see" content-rating preferences
+		// (Feed/WatchOuts filter — see UserContentRatingPreference's own doc comment)
+		&models.UserContentRatingPreference{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
@@ -689,7 +692,18 @@ func main() {
 	// Public routes (discover feed, view single post, read comments)
 	postsPublic := r.Group("/api/posts")
 	{
-		postsPublic.GET("", handlers.GetDiscoverFeed)              // GET /api/posts (Discover feed - randomized public posts)
+		// OptionalAuthMiddleware here is a real fix, not incidental: without it
+		// currentUserID/viewerSettings inside GetDiscoverFeed were ALWAYS zero-
+		// value (guest) even for a real logged-in request with a valid Bearer
+		// token — this route had no auth middleware of any kind before, so the
+		// token was never read. Found while live-testing the new content-rating
+		// preference filter (a fresh, real, adult-DOB account's own 18+ post
+		// never appeared even with zero preferences set, confirming the
+		// pre-existing age-eligibility gate — canViewContentRating — was
+		// ALSO silently degraded to "always treat as unauthenticated" on this
+		// specific endpoint, same root cause, predating this feature). Matches
+		// the exact pattern already used for GET /api/community-events.
+		postsPublic.GET("", handlers.OptionalAuthMiddleware(), handlers.GetDiscoverFeed) // GET /api/posts (Discover feed - randomized public posts)
 		postsPublic.GET("/:id", handlers.GetPost)                  // GET /api/posts/:id (Get single post)
 		postsPublic.POST("/:id/view", handlers.TrackPostView)      // POST /api/posts/:id/view (Track view - no auth required)
 		postsPublic.GET("/:id/comments", handlers.GetPostComments) // GET /api/posts/:id/comments (Get comments)
@@ -791,6 +805,8 @@ func main() {
 		protected.POST("/upload/custom-background", handlers.UploadCustomBackgroundHandler)                      // POST /api/upload/custom-background (Custom watch type background image)
 		protected.GET("/user/calendar", handlers.GetUserCalendarHandler)                                         // GET /api/user/calendar?month=2026-05
 		protected.GET("/user/upcoming-events", handlers.GetUserUpcomingEventsHandler)                            // GET /api/user/upcoming-events (next 30 days)
+		protected.GET("/user/content-rating-preferences", handlers.GetContentRatingPreferencesHandler)           // GET /api/user/content-rating-preferences (multi-select Feed/WatchOuts filter)
+		protected.POST("/user/content-rating-preferences", handlers.SetContentRatingPreferencesHandler)          // POST /api/user/content-rating-preferences (full replace)
 
 		// ✅ RSVP & Ticketing routes
 		protected.POST("/scheduled-events/:id/rsvp", handlers.CreateFreeRSVPHandler)                 // POST /api/scheduled-events/:id/rsvp (RSVP to free event)

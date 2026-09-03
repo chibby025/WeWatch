@@ -3536,6 +3536,28 @@ const LobbyPage = () => {
                 break;
               }
 
+              case 'lobby_chat_read': {
+                // Pushed only to the ORIGINAL SENDER (see BroadcastLobbyChatRead's
+                // own doc comment, lobby_chats.go) — so sender_id here is always
+                // this client's own currentUser.id, and reader_id is the other
+                // person in the conversation (the chatMessages/otherUserId key).
+                const readData = message.data || message;
+                const readerId = readData.reader_id;
+                const readMessageIds = new Set(readData.message_ids || []);
+                if (readMessageIds.size === 0) break;
+                setChatMessages(prev => {
+                  const existing = prev[readerId];
+                  if (!existing) return prev;
+                  const next = existing.map(m =>
+                    readMessageIds.has(m.id) ? { ...m, read_at: readData.read_at } : m
+                  );
+                  // Keep cache in sync, same discipline the message-append path above uses.
+                  _lobbyCache.dms.set(readerId, next.slice(-30));
+                  return { ...prev, [readerId]: next };
+                });
+                break;
+              }
+
               case 'group_call_incoming':
                 setIncomingGroupCall(message.data || message);
                 toast(`📞 Group Call in ${(message.data || message).group_name}`, {

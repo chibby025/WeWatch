@@ -1,11 +1,21 @@
 // WeWatch/backend/internal/handlers/feed_algorithm.go
 // Scores and re-ranks the entire eligible post pool, then the caller paginates in Go.
 //
+// Content-rating FILTERING (both the age-eligibility gate and the user's own
+// "what do you want to see" preference set) happens entirely upstream of this
+// file, as SQL/Go-side pool filters in posts.go — see canViewContentRating/
+// restrictedContentRatings and getPreferredContentRatings. By the time a post
+// reaches ScoreAndSortPosts, it has already passed both, so affinityBoost
+// below is deliberately NOT a content-eligibility mechanism — it never
+// excludes anything, it only nudges order within an already-allowed pool.
+//
 // Scoring formula:
 //   recencyScore  = 10000 / (hours_old + 1)            — dominant signal, halves every ~2× in age
 //   engBoost      = joined-room ×1.4 | big-room ×1.2 | KYC-author ×1.15
 //   engBonus      = min(rawEngagement × engBoost, recencyScore × 0.30)  — capped at 30% of recency
-//   affinity      = content-affinity multiplier per viewer preference (primary ×2.0, adjacent ×1.5/1.2)
+//   affinity      = ×1.15 if the post's rating matches the viewer's auto-derived
+//                   "primary" (see below), else ×1.0 — a small secondary nudge, not the
+//                   thing that determines whether a post appears at all
 //   final score   = (recencyScore + engBonus) × affinity
 //
 // Property: engagement can shuffle posts within a similar-age band but cannot promote an
@@ -26,23 +36,31 @@ type scoredPost struct {
 	score float64
 }
 
-// affinityBoost returns a content-rating affinity multiplier for a viewer with the given
-// primary preference. Primary match = ×2.0, adjacent high = ×1.5, adjacent low = ×1.2, neutral = ×1.0.
-func affinityBoost(viewerPref, postRating string) float64 {
-	affinityMap := map[string]map[string]float64{
-		"G":           {"G": 2.0, "PG": 1.5, "Educational": 1.2},
-		"PG":          {"PG": 2.0, "G": 1.5, "Educational": 1.2, "13+": 1.2},
-		"Educational": {"Educational": 2.0, "G": 1.5, "PG": 1.2, "Religious": 1.2},
-		"Religious":   {"Religious": 2.0, "Educational": 1.5, "G": 1.2},
-		"13+":         {"13+": 2.0, "PG": 1.5, "16+": 1.2, "G": 1.2},
-		"16+":         {"16+": 2.0, "13+": 1.5, "18+": 1.2, "PG": 1.2},
-		"18+":         {"18+": 2.0, "Mature": 1.5, "16+": 1.2, "13+": 1.2},
-		"Mature":      {"Mature": 2.0, "18+": 1.5, "16+": 1.2},
-	}
-	if prefs, ok := affinityMap[viewerPref]; ok {
-		if b, ok := prefs[postRating]; ok {
-			return b
-		}
+// affinityFocusBoost is the small secondary nudge for a post whose rating
+// exactly matches the viewer's auto-derived "primary" rating (UserSettings.
+// PrimaryRating — the first rating a user selected in their multi-select
+// content-rating preferences, see SetContentRatingPreferencesHandler). Kept
+// deliberately small: real inclusion/exclusion is already decided upstream
+// by the hard preference filter (posts.go), so among several ratings a user
+// equally opted into, this only slightly favors whichever one they picked
+// first — it is not a proxy for "does the user want this at all" anymore.
+//
+// This used to be a 3-tier adjacency map (exact/close/loose match, up to
+// ×2.0) computed against a single "primary preference" that WAS the sole
+// signal deciding relevance. Once a real hard filter exists upstream, that
+// adjacency concept stops being meaningful: every post reaching this
+// function already has a rating the viewer explicitly opted into, so a
+// rating-vs-rating "closeness" score has nothing left to differentiate —
+// it would return the same top tier for every surviving post. A flat,
+// smaller binary nudge is what's actually left to compute.
+const affinityFocusBoost = 1.15
+
+// affinityBoost returns the small secondary ranking nudge described above.
+// viewerPrimary may be "" (no preference set yet, or none selected) — always
+// neutral in that case, same as an unauthenticated viewer.
+func affinityBoost(viewerPrimary, postRating string) float64 {
+	if viewerPrimary != "" && viewerPrimary == postRating {
+		return affinityFocusBoost
 	}
 	return 1.0
 }

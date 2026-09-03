@@ -90,7 +90,7 @@ func CreateWatchSessionWithTypeAndTicketing(roomID uint, hostID uint, watchType 
 		session.EarlyBirdPriceTokens = ticketingInput.EarlyBirdPriceTokens
 		session.CustomBackgroundURL = ticketingInput.CustomBackgroundURL
 		session.ScreenRegion = ticketingInput.ScreenRegion
-		
+
 		// Set early bird as active if enabled (will be deactivated when end time passes)
 		if ticketingInput.EarlyBirdEnabled {
 			session.EarlyBirdActive = true
@@ -110,7 +110,7 @@ func CreateWatchSessionWithTypeAndTicketing(roomID uint, hostID uint, watchType 
 	log.Printf("\n✅✅✅ [DB SAVE] Session SAVED to database!")
 	log.Printf("✅ [DB SAVE] Session ID: %s", sessionID)
 	log.Printf("✅ [DB SAVE] 🎯 ContentRating field value: '%s'", session.ContentRating)
-	
+
 	// Verify what was actually saved
 	log.Printf("\n🔎 [VERIFY] Reading back from database to verify...")
 	var savedSession models.WatchSession
@@ -198,13 +198,101 @@ func GetRoomMessages(c *gin.Context) {
 	}
 
 	var readPosition *uint
+	var requestingUserID uint
 	if userIDValue, exists := c.Get("user_id"); exists {
 		if userID, ok := userIDValue.(uint); ok {
+			requestingUserID = userID
 			readPosition = GetReadPosition(DB, userID, "room", conversationKey)
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"messages": messages, "last_read_message_id": readPosition})
+	c.JSON(http.StatusOK, gin.H{
+		"messages":             messages,
+		"last_read_message_id": readPosition,
+		"other_read_positions": getOtherRoomReadPositions(uint(roomID), conversationKey, requestingUserID),
+	})
+}
+
+// RoomReadPositionEntry is one other member's current "furthest read"
+// position in a room conversation — feeds the room chat's live "seen by"
+// avatar strip. See broadcastRoomReadPosition (chat_read_position_handler.go)
+// for the live-update half of this same feature.
+type RoomReadPositionEntry struct {
+	UserID            uint   `json:"user_id"`
+	Username          string `json:"username"`
+	AvatarURL         string `json:"avatar_url"`
+	LastReadMessageID uint   `json:"last_read_message_id"`
+}
+
+// getOtherRoomReadPositions returns every currently-CONNECTED member's saved
+// read position for this exact room conversation. Deliberately scoped to
+// live WS connections (Hub.GetRoomActiveUserIDs), not the room's full
+// membership list — a room can have hundreds of members but only ever a
+// realistic handful actively viewing chat at once; this is what keeps the
+// "seen by" feature cheap and bounded regardless of room size, rather than
+// something the frontend has to defend against after the fact. A defensive
+// hard cap is applied on top anyway, in case a single room's live
+// connections are ever unusually large.
+func getOtherRoomReadPositions(roomID uint, conversationKey string, excludeUserID uint) []RoomReadPositionEntry {
+	manager := GetWebSocketManager()
+	if manager == nil {
+		return []RoomReadPositionEntry{}
+	}
+	activeSet := manager.GetRoomActiveUserIDs(roomID)
+	if len(activeSet) == 0 {
+		return []RoomReadPositionEntry{}
+	}
+	activeIDs := make([]uint, 0, len(activeSet))
+	for id := range activeSet {
+		if id == excludeUserID {
+			continue
+		}
+		activeIDs = append(activeIDs, id)
+	}
+	if len(activeIDs) == 0 {
+		return []RoomReadPositionEntry{}
+	}
+
+	const maxEntries = 60
+	var positions []models.ChatReadPosition
+	if err := DB.Where("conversation_type = ? AND conversation_key = ? AND user_id IN ?", "room", conversationKey, activeIDs).
+		Limit(maxEntries).
+		Find(&positions).Error; err != nil {
+		log.Printf("getOtherRoomReadPositions: query failed: %v", err)
+		return []RoomReadPositionEntry{}
+	}
+	if len(positions) == 0 {
+		return []RoomReadPositionEntry{}
+	}
+
+	userIDs := make([]uint, len(positions))
+	for i, p := range positions {
+		userIDs[i] = p.UserID
+	}
+	var users []models.User
+	if err := DB.Select("id", "username", "avatar_url").Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+		log.Printf("getOtherRoomReadPositions: user lookup failed: %v", err)
+		return []RoomReadPositionEntry{}
+	}
+	userByID := make(map[uint]models.User, len(users))
+	for _, u := range users {
+		userByID[u.ID] = u
+	}
+
+	entries := make([]RoomReadPositionEntry, 0, len(positions))
+	for _, p := range positions {
+		u, ok := userByID[p.UserID]
+		if !ok {
+			continue
+		}
+		entries = append(entries, RoomReadPositionEntry{
+			UserID:            p.UserID,
+			Username:          u.Username,
+			AvatarURL:         u.AvatarURL,
+			LastReadMessageID: p.LastReadMessageID,
+		})
+	}
+	return entries
 }
 
 // CreateRoomMessage creates a new persistent message in a room
@@ -278,8 +366,8 @@ func CreateRoomMessage(c *gin.Context) {
 			"user_id":       message.UserID,
 			"username":      message.Username,
 			"message":       message.Message,
-			"reply_to":      message.ReplyTo,      // Include reply context
-			"room_group_id": message.RoomGroupID,  // Include group ID for filtering
+			"reply_to":      message.ReplyTo,     // Include reply context
+			"room_group_id": message.RoomGroupID, // Include group ID for filtering
 			"created_at":    message.CreatedAt,
 		},
 	}
@@ -493,14 +581,14 @@ func CreateWatchSession(c *gin.Context) {
 
 	var input struct {
 		WatchType     string `json:"watch_type" binding:"required"`
-		ClassType     string `json:"class_type"`      // "classroom" or "lecture_hall" (for watch_type="classroom")
-		ContentRating string `json:"content_rating"`  // "G", "PG", "13+", "16+", "18+", "Mature"
+		ClassType     string `json:"class_type"`     // "classroom" or "lecture_hall" (for watch_type="classroom")
+		ContentRating string `json:"content_rating"` // "G", "PG", "13+", "16+", "18+", "Mature"
 
 		// Ticketing fields
-		TicketingEnabled     bool    `json:"ticketing_enabled"`
-		TicketPriceTokens    int     `json:"ticket_price_tokens"`
-		TicketPriceCurrency  string  `json:"ticket_price_currency"`
-		TicketPriceAmount    float64 `json:"ticket_price_amount"`
+		TicketingEnabled    bool    `json:"ticketing_enabled"`
+		TicketPriceTokens   int     `json:"ticket_price_tokens"`
+		TicketPriceCurrency string  `json:"ticket_price_currency"`
+		TicketPriceAmount   float64 `json:"ticket_price_amount"`
 
 		// Early bird fields
 		EarlyBirdEnabled     bool   `json:"early_bird_enabled"`
@@ -748,7 +836,7 @@ func CreateWatchSession(c *gin.Context) {
 		"session_id":        session.SessionID,
 		"watch_type":        session.WatchType,
 		"class_type":        session.ClassType,
-		"content_rating":    session.ContentRating,    // ✅ Include content rating
+		"content_rating":    session.ContentRating, // ✅ Include content rating
 		"ticketing_enabled": session.TicketingEnabled,
 		"ticket_price":      session.TicketPriceTokens,
 	})
@@ -1290,4 +1378,3 @@ func GetRoomUnreadPostsHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"unread_count": count})
 }
-

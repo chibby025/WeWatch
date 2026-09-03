@@ -157,6 +157,25 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		}
 	}
 
+	// Preference filter (see getPreferredContentRatings, posts.go) — a hard
+	// include, same layer as the age-gate check just below, not inside it:
+	// a rating can pass the age gate and still be hidden here if the viewer
+	// simply didn't ask to see it. Loaded once before the loop, same as
+	// viewerSettings above. Empty = no preference expressed = don't filter.
+	// Note: like the age-gate check below, this runs AFTER the SQL-level
+	// Offset/Limit above rather than being pushed into that query — matches
+	// this handler's own existing (pre-existing, not introduced here)
+	// pattern for the age gate; unlike posts.go's cold-pool query, which
+	// pushes an equivalent filter into SQL specifically to keep offset-based
+	// pagination exact.
+	var preferredSessionRatings map[string]bool
+	if raw := getPreferredContentRatings(DB, userID); len(raw) > 0 {
+		preferredSessionRatings = make(map[string]bool, len(raw))
+		for _, r := range raw {
+			preferredSessionRatings[r] = true
+		}
+	}
+
 	// Build response with room and host details
 	var response []SessionResponse
 	for _, session := range sessions {
@@ -166,7 +185,10 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 				session.ContentRating, session.SessionID, userID)
 			continue
 		}
-		
+		if preferredSessionRatings != nil && !preferredSessionRatings[session.ContentRating] {
+			continue
+		}
+
 		// ✅ PRIVACY FILTER: Skip private sessions unless user is a member
 		if session.IsPrivate && userID > 0 {
 			// Check if user is a member of this private session

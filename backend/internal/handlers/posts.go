@@ -112,7 +112,7 @@ func filterPostsByVisibility(posts []models.Post, currentUserID uint) []models.P
 // coldPostsQuery builds the shared WHERE clause for posts older than the hot
 // pool's rolling cutoff — reused by fetchColdPosts and its existence/count
 // probes so they can never disagree on which rows are in scope.
-func coldPostsQuery(cutoff time.Time, searchQuery string, excludedRatings []string) *gorm.DB {
+func coldPostsQuery(cutoff time.Time, searchQuery string, excludedRatings []string, preferredRatings []string) *gorm.DB {
 	query := DB.Model(&models.Post{}).
 		Where("posts.is_public = ? AND posts.deleted_at IS NULL AND posts.created_at <= ?", true, cutoff)
 	if searchQuery != "" {
@@ -122,6 +122,12 @@ func coldPostsQuery(cutoff time.Time, searchQuery string, excludedRatings []stri
 	}
 	if len(excludedRatings) > 0 {
 		query = query.Where("posts.content_rating NOT IN ?", excludedRatings)
+	}
+	// Preference filter (see getPreferredContentRatings) — hard include,
+	// same SQL-pushdown reasoning as excludedRatings above: an approximate
+	// Go-side filter here would desync offset-based pagination.
+	if len(preferredRatings) > 0 {
+		query = query.Where("posts.content_rating IN ?", preferredRatings)
 	}
 	return query
 }
@@ -138,7 +144,7 @@ func coldPostsQuery(cutoff time.Time, searchQuery string, excludedRatings []stri
 // would silently and permanently skip content, since the frontend advances
 // offset by a fixed page size regardless of how many posts a given page
 // actually returned.
-func fetchColdPosts(cutoff time.Time, searchQuery string, excludedRatings []string, currentUserID uint, coldOffset, need int) ([]models.Post, bool) {
+func fetchColdPosts(cutoff time.Time, searchQuery string, excludedRatings []string, preferredRatings []string, currentUserID uint, coldOffset, need int) ([]models.Post, bool) {
 	if need <= 0 {
 		return nil, false
 	}
@@ -152,7 +158,7 @@ func fetchColdPosts(cutoff time.Time, searchQuery string, excludedRatings []stri
 	collected := make([]models.Post, 0, need)
 	for attempt := 0; attempt < maxAttempts && len(collected) < need; attempt++ {
 		var batch []models.Post
-		coldPostsQuery(cutoff, searchQuery, excludedRatings).
+		coldPostsQuery(cutoff, searchQuery, excludedRatings, preferredRatings).
 			Preload("User").Preload("Room").
 			Order("posts.created_at DESC").
 			Offset(rawOffset).Limit(rawLimit).
@@ -180,9 +186,9 @@ func fetchColdPosts(cutoff time.Time, searchQuery string, excludedRatings []stri
 // countColdPosts is a cheap indexed COUNT for the API's total field — only
 // ever called once a request actually reaches into the cold pool, never on
 // every hot-pool page.
-func countColdPosts(cutoff time.Time, searchQuery string, excludedRatings []string) int64 {
+func countColdPosts(cutoff time.Time, searchQuery string, excludedRatings []string, preferredRatings []string) int64 {
 	var count int64
-	coldPostsQuery(cutoff, searchQuery, excludedRatings).Count(&count)
+	coldPostsQuery(cutoff, searchQuery, excludedRatings, preferredRatings).Count(&count)
 	return count
 }
 
@@ -575,6 +581,25 @@ func GetDiscoverFeed(c *gin.Context) {
 	}
 	filteredPosts = ratingFiltered
 
+	// Preference filter — hard include, sits above ScoreAndSortPosts, same
+	// layer as the age gate above (not inside it — a rating can pass the age
+	// gate and still be excluded here if the user simply didn't ask for it).
+	// Empty preferredRatings means "no preference expressed" — don't filter.
+	preferredRatings := getPreferredContentRatings(DB, currentUserID)
+	if len(preferredRatings) > 0 {
+		preferredSet := make(map[string]bool, len(preferredRatings))
+		for _, r := range preferredRatings {
+			preferredSet[r] = true
+		}
+		preferenceFiltered := make([]models.Post, 0, len(filteredPosts))
+		for _, p := range filteredPosts {
+			if preferredSet[p.ContentRating] {
+				preferenceFiltered = append(preferenceFiltered, p)
+			}
+		}
+		filteredPosts = preferenceFiltered
+	}
+
 	// Score and sort the ENTIRE eligible pool globally, then paginate in Go.
 	// Ranking the full pool (not individual pages) means old-but-engaged posts
 	// compete fairly across all pages rather than winning on a small page.
@@ -612,18 +637,18 @@ func GetDiscoverFeed(c *gin.Context) {
 			// belongs in the response regardless of whether this happens to be
 			// the last cold page too (hasMore only reflects "more after this").
 			var coldPosts []models.Post
-			coldPosts, hasMore = fetchColdPosts(cutoff, searchQuery, excludedRatings, currentUserID, coldOffset, remaining)
+			coldPosts, hasMore = fetchColdPosts(cutoff, searchQuery, excludedRatings, preferredRatings, currentUserID, coldOffset, remaining)
 			pagePosts = append(pagePosts, coldPosts...)
-			total += int(countColdPosts(cutoff, searchQuery, excludedRatings))
+			total += int(countColdPosts(cutoff, searchQuery, excludedRatings, preferredRatings))
 		} else {
 			// Hot pool ended exactly on this page — cheap existence probe only,
 			// no need for the fuller fetch-and-filter path above. Skip the count
 			// entirely when the probe finds nothing — it would just return 0.
 			var probe []models.Post
-			coldPostsQuery(cutoff, searchQuery, excludedRatings).Limit(1).Find(&probe)
+			coldPostsQuery(cutoff, searchQuery, excludedRatings, preferredRatings).Limit(1).Find(&probe)
 			hasMore = len(probe) > 0
 			if hasMore {
-				total += int(countColdPosts(cutoff, searchQuery, excludedRatings))
+				total += int(countColdPosts(cutoff, searchQuery, excludedRatings, preferredRatings))
 			}
 		}
 	}

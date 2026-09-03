@@ -1,6 +1,8 @@
 // frontend/src/components/UserPreferencesModal.jsx
 import { useState, useEffect } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
+import ContentRatingPreferencePicker from './ContentRatingPreferencePicker';
+import { useContentRatingPreferences } from '../hooks/useContentRatingPreferences';
 
 const CATEGORIES = [
   { id: 'entertainment', label: 'Entertainment', emoji: '🎬', desc: 'Movies, series, anime, comedy' },
@@ -30,6 +32,18 @@ const STORAGE_KEYS = {
 export default function UserPreferencesModal({ isOpen, onClose }) {
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [defaultRating, setDefaultRating] = useState('G');
+  // "What do you want to see" — the real backend-connected signal that
+  // drives Feed/WatchOuts filtering+ranking (see feed_algorithm.go,
+  // content_rating_preference_handler.go). Shared component/hook with
+  // OnboardingTour — whichever surface you edit from last is what the other
+  // reflects. Deliberately separate from defaultRating above, which stays
+  // its own client-only "pre-fill a new session" convenience and is
+  // untouched by this section.
+  // enabled: isOpen — the hook's own internal effect re-loads automatically
+  // every time the modal opens (same "re-read on open" behavior the
+  // localStorage fields below already have), no extra call needed here.
+  const { selectedCardIds, setSelectedCardIds, save: saveRatingPrefs, saving: savingRatingPrefs } =
+    useContentRatingPreferences({ enabled: isOpen });
 
   useEffect(() => {
     if (isOpen) {
@@ -46,9 +60,10 @@ export default function UserPreferencesModal({ isOpen, onClose }) {
     );
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     localStorage.setItem(STORAGE_KEYS.categories, JSON.stringify(selectedCategories));
     localStorage.setItem(STORAGE_KEYS.rating, defaultRating);
+    await saveRatingPrefs(selectedCardIds);
     onClose();
   };
 
@@ -69,6 +84,18 @@ export default function UserPreferencesModal({ isOpen, onClose }) {
         </div>
 
         <div className="overflow-y-auto flex-1 px-5 py-4 space-y-6">
+          {/* What do you want to see — the real signal driving Feed/WatchOuts */}
+          <div>
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">What do you want to see?</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              Pick as many as you like — this is what actually shapes your Feed and WatchOuts.
+            </p>
+            <ContentRatingPreferencePicker selectedCardIds={selectedCardIds} onChange={setSelectedCardIds} />
+            {selectedCardIds.length === 0 && (
+              <p className="text-xs text-gray-400 mt-2 text-center">Nothing selected yet — you'll see everything, unfiltered</p>
+            )}
+          </div>
+
           {/* Content Categories */}
           <div>
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">Preferred Categories</h3>
@@ -127,9 +154,10 @@ export default function UserPreferencesModal({ isOpen, onClose }) {
           </button>
           <button
             onClick={handleSave}
-            className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl hover:from-purple-700 hover:to-blue-700 transition-all shadow-md"
+            disabled={savingRatingPrefs}
+            className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl hover:from-purple-700 hover:to-blue-700 disabled:opacity-60 transition-all shadow-md"
           >
-            Save Preferences
+            {savingRatingPrefs ? 'Saving…' : 'Save Preferences'}
           </button>
         </div>
       </div>

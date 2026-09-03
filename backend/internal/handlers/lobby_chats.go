@@ -122,11 +122,32 @@ func GetLobbyChatMessagesHandler(c *gin.Context) {
 	
 	log.Printf("GetLobbyChatMessagesHandler: Found %d messages between user %d and user %d", len(messages), currentUserID, otherUserID)
 
+	// Collect exactly which of the just-fetched messages this call is about
+	// to mark as read — derived from the `messages` slice already in hand,
+	// no extra query needed. This is what makes a live read-receipt push to
+	// the SENDER possible: without it, the sender only ever finds out a
+	// message was read the next time THEY happen to re-fetch this same
+	// conversation (this handler's own previous behavior), not in real
+	// time while both people are actively chatting.
+	var justReadIDs []uint
+	for _, m := range messages {
+		if m.SenderID == uint(otherUserID) && m.ReadAt == nil {
+			justReadIDs = append(justReadIDs, m.ID)
+		}
+	}
+
 	// Mark all unread messages from other user as read
 	now := time.Now()
 	db.Model(&models.LobbyChat{}).
 		Where("sender_id = ? AND recipient_id = ? AND read_at IS NULL AND deleted_at IS NULL", uint(otherUserID), currentUserID).
 		Update("read_at", now)
+
+	// Tell the sender live, over WebSocket, that these specific messages are
+	// now read — the read-receipt ticks in their own open chat update
+	// immediately instead of waiting on their next fetch.
+	if len(justReadIDs) > 0 {
+		go BroadcastLobbyChatRead(uint(otherUserID), currentUserID, justReadIDs, now)
+	}
 
 	log.Printf("GetLobbyChatMessagesHandler: Fetched %d messages between user %d and user %d", len(messages), currentUserID, otherUserID)
 
@@ -334,4 +355,46 @@ func BroadcastLobbyChatMessage(db *gorm.DB, chat models.LobbyChat, sender models
 	manager.BroadcastToUsers([]uint{chat.SenderID, chat.RecipientID}, outgoingMsg)
 
 	log.Printf("BroadcastLobbyChatMessage: Broadcast sent to users %d and %d", chat.SenderID, chat.RecipientID)
+}
+
+// BroadcastLobbyChatRead notifies the ORIGINAL SENDER (senderID) that the
+// reader (readerID) just read a batch of that sender's own messages —
+// pushed live over WebSocket the moment GetLobbyChatMessagesHandler marks
+// them read, rather than waiting for the sender's own client to happen to
+// re-fetch the conversation. Only the sender needs this push: the reader
+// already knows they just read the messages (it's their own action), so
+// there's nothing to tell them.
+func BroadcastLobbyChatRead(senderID, readerID uint, messageIDs []uint, readAt time.Time) {
+	manager := GetWebSocketManager()
+	if manager == nil {
+		log.Println("BroadcastLobbyChatRead: WebSocket manager not available")
+		return
+	}
+
+	payload := map[string]interface{}{
+		"reader_id":   readerID,
+		"sender_id":   senderID,
+		"message_ids": messageIDs,
+		"read_at":     readAt,
+	}
+
+	wsMessage := map[string]interface{}{
+		"type": "lobby_chat_read",
+		"data": payload,
+	}
+
+	jsonBytes, err := json.Marshal(wsMessage)
+	if err != nil {
+		log.Printf("BroadcastLobbyChatRead: Failed to marshal message: %v", err)
+		return
+	}
+
+	outgoingMsg := OutgoingMessage{
+		Data:     jsonBytes,
+		IsBinary: false,
+	}
+
+	manager.BroadcastToUsers([]uint{senderID}, outgoingMsg)
+
+	log.Printf("BroadcastLobbyChatRead: %d message(s) marked read by user %d, notified sender %d", len(messageIDs), readerID, senderID)
 }

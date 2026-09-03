@@ -62,6 +62,26 @@ func GetCommunityEventsHandler(c *gin.Context) {
 		if viewerSettings.PrimaryRating != "" {
 			primaryRating = viewerSettings.PrimaryRating
 		}
+
+		// Preference filter — intersect the age-based allow-list with the
+		// viewer's own "what do you want to see" set (getPreferredContentRatings,
+		// posts.go). Same layer, same reasoning as posts.go/session_helpers.go:
+		// a rating already allowed by age can still be excluded here if the
+		// user simply didn't opt into it. Empty preference set = don't filter
+		// (leave allowedRatings as the age-only list).
+		if preferred := getPreferredContentRatings(DB, currentUserID); len(preferred) > 0 {
+			preferredSet := make(map[string]bool, len(preferred))
+			for _, r := range preferred {
+				preferredSet[r] = true
+			}
+			intersected := allowedRatings[:0:0]
+			for _, r := range allowedRatings {
+				if preferredSet[r] {
+					intersected = append(intersected, r)
+				}
+			}
+			allowedRatings = intersected
+		}
 	}
 
 	// Scheduled events: public, not yet started, within next 14 days, filtered by content rating

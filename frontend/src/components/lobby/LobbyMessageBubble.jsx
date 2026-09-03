@@ -166,6 +166,25 @@ const LobbyMessageBubble = ({
   const formatMessageTime = (ts) =>
     new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+  // WhatsApp-style 2-state read receipt: a single check (whatever color the
+  // surrounding timestamp text already uses, via text-current) for sent-
+  // but-not-yet-read, a double blue check once message.read_at is set.
+  // Only ever rendered for isOwn messages — you don't need a tick telling
+  // you whether you've read someone else's message. Deliberately not shown
+  // on system_call entries (a call-log line, not a real chat message with
+  // a meaningful "did they read it" question), every other message type
+  // gets it.
+  const ReadReceiptTick = ({ readAt }) => (
+    readAt ? (
+      <span className="inline-flex -space-x-1.5 ml-1 align-middle">
+        <CheckIcon className="w-3 h-3 text-blue-300" />
+        <CheckIcon className="w-3 h-3 text-blue-300" />
+      </span>
+    ) : (
+      <CheckIcon className="inline w-3 h-3 ml-1 align-middle text-current opacity-70" />
+    )
+  );
+
   const canEditMsg = isOwn && messageType === 'text' &&
     (Date.now() - new Date(message.created_at).getTime()) < 5 * 60 * 1000;
 
@@ -319,6 +338,7 @@ const LobbyMessageBubble = ({
                 )}
                 <p className={`text-[10px] mt-1 text-right ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>
                   {formatMessageTime(message.created_at)}
+                  {isOwn && <ReadReceiptTick readAt={message.read_at} />}
                 </p>
               </>
             )}
@@ -355,7 +375,7 @@ const LobbyMessageBubble = ({
             </div>
             <div className="flex items-center justify-between mt-1">
               <p className="text-xs opacity-75">🎤 Voice message</p>
-              <p className={`text-[10px] ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}</p>
+              <p className={`text-[10px] ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}{isOwn && <ReadReceiptTick readAt={message.read_at} />}</p>
             </div>
           </div>
         )}
@@ -371,7 +391,7 @@ const LobbyMessageBubble = ({
             />
             <div className="flex items-center justify-between px-3 py-1.5 sm:px-4 sm:py-2">
               <p className="text-xs">📷 Photo</p>
-              <p className={`text-[10px] ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}</p>
+              <p className={`text-[10px] ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}{isOwn && <ReadReceiptTick readAt={message.read_at} />}</p>
             </div>
           </div>
         )}
@@ -382,7 +402,7 @@ const LobbyMessageBubble = ({
             <video src={message.attachment_url} controls className="w-full max-h-80 rounded-t-lg" onClick={e => e.stopPropagation()} />
             <div className="flex items-center justify-between px-3 py-1.5 sm:px-4 sm:py-2">
               <p className="text-xs">🎥 Video</p>
-              <p className={`text-[10px] ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}</p>
+              <p className={`text-[10px] ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}{isOwn && <ReadReceiptTick readAt={message.read_at} />}</p>
             </div>
           </div>
         )}
@@ -410,7 +430,7 @@ const LobbyMessageBubble = ({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
             </a>
-            <p className={`text-[10px] mt-1 text-right ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}</p>
+            <p className={`text-[10px] mt-1 text-right ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}{isOwn && <ReadReceiptTick readAt={message.read_at} />}</p>
           </div>
         )}
 
@@ -422,7 +442,7 @@ const LobbyMessageBubble = ({
             ) : (
               <img src={message.attachment_url} alt="Sticker" className="w-32 h-32 sm:w-40 sm:h-40 object-contain" />
             )}
-            <p className={`text-[10px] text-right mt-1 px-1 ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}</p>
+            <p className={`text-[10px] text-right mt-1 px-1 ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}{isOwn && <ReadReceiptTick readAt={message.read_at} />}</p>
           </div>
         )}
 
@@ -470,7 +490,7 @@ const LobbyMessageBubble = ({
                 );
               })}
             </div>
-            <p className={`text-[10px] text-right mt-2 ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}</p>
+            <p className={`text-[10px] text-right mt-2 ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}{isOwn && <ReadReceiptTick readAt={message.read_at} />}</p>
           </div>
         )}
 
@@ -545,6 +565,7 @@ const LobbyMessageBubble = ({
 
               <p className={`text-[10px] mt-1 text-gray-500 ${isOwn ? 'text-right' : 'text-left'}`}>
                 {formatMessageTime(message.created_at)}
+                {isOwn && <ReadReceiptTick readAt={message.read_at} />}
               </p>
             </div>
           );
@@ -592,6 +613,7 @@ const LobbyMessageBubble = ({
               </div>
               <p className={`text-[10px] mt-1 text-gray-500 ${isOwn ? 'text-right' : 'text-left'}`}>
                 {formatMessageTime(message.created_at)}
+                {isOwn && <ReadReceiptTick readAt={message.read_at} />}
               </p>
             </div>
           );
@@ -601,7 +623,7 @@ const LobbyMessageBubble = ({
         {messageType === 'link' && (
           <div className="px-3 py-2 sm:px-4 sm:py-2.5">
             <a href={message.message} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-xs sm:text-sm underline break-all hover:opacity-80 transition-opacity">{message.message}</a>
-            <p className={`text-[10px] text-right mt-1 ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}</p>
+            <p className={`text-[10px] text-right mt-1 ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}{isOwn && <ReadReceiptTick readAt={message.read_at} />}</p>
           </div>
         )}
       </div>

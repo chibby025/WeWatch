@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"encoding/json"
+	"log"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -67,6 +71,9 @@ func UpsertReadPositionHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save read position"})
 			return
 		}
+		if req.ConversationType == "room" {
+			broadcastRoomReadPosition(userID, req.ConversationKey, newPos.LastReadMessageID)
+		}
 		c.JSON(http.StatusOK, gin.H{"last_read_message_id": newPos.LastReadMessageID})
 		return
 	}
@@ -77,8 +84,68 @@ func UpsertReadPositionHandler(c *gin.Context) {
 
 	if req.LastReadMessageID > existing.LastReadMessageID {
 		DB.Model(&existing).Update("last_read_message_id", req.LastReadMessageID)
+		if req.ConversationType == "room" {
+			broadcastRoomReadPosition(userID, req.ConversationKey, req.LastReadMessageID)
+		}
 		c.JSON(http.StatusOK, gin.H{"last_read_message_id": req.LastReadMessageID})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"last_read_message_id": existing.LastReadMessageID})
+}
+
+// broadcastRoomReadPosition pushes a live "so-and-so has read up to message N"
+// update to every currently-connected client in the room — this is what lets
+// the room chat's "seen by" avatar strip move in real time instead of only
+// updating for whoever next reloads the page. Room-only: DM/group read
+// receipts are handled by their own separate, already-existing mechanisms
+// (LobbyChat.ReadAt for DMs; group unread counts use LobbyGroupMember's own
+// LastReadAt, not this ChatReadPosition-backed feature at all).
+//
+// conversationKey is the same "<roomID>:<groupID|main>" shape GetRoomMessages
+// already builds and consumes — parsed back apart here rather than adding a
+// second request field, since the frontend already has to construct this
+// exact key for the read-position POST itself.
+func broadcastRoomReadPosition(readerID uint, conversationKey string, lastReadMessageID uint) {
+	parts := strings.SplitN(conversationKey, ":", 2)
+	if len(parts) != 2 {
+		return
+	}
+	roomIDVal, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		return
+	}
+	roomID := uint(roomIDVal)
+
+	var roomGroupID interface{}
+	if parts[1] != "" && parts[1] != "main" {
+		if gid, err := strconv.ParseUint(parts[1], 10, 64); err == nil {
+			roomGroupID = uint(gid)
+		}
+	}
+
+	manager := GetWebSocketManager()
+	if manager == nil {
+		return
+	}
+
+	payload := map[string]interface{}{
+		"user_id":              readerID,
+		"room_group_id":        roomGroupID,
+		"last_read_message_id": lastReadMessageID,
+	}
+	wsMessage := map[string]interface{}{
+		"type": "room_read_position",
+		"data": payload,
+	}
+	jsonBytes, err := json.Marshal(wsMessage)
+	if err != nil {
+		log.Printf("broadcastRoomReadPosition: failed to marshal: %v", err)
+		return
+	}
+	// sender=nil: this originates from a plain HTTP handler, not a live WS
+	// client, so there's no *Client to exclude the reader from their own
+	// broadcast — the frontend filters out its own user_id when rendering
+	// instead (cheap, and consistent with how other HTTP-originated
+	// broadcasts in this codebase already handle the same constraint).
+	manager.BroadcastToRoom(roomID, OutgoingMessage{Data: jsonBytes, IsBinary: false}, nil)
 }

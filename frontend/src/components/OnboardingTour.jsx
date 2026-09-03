@@ -1,11 +1,16 @@
 // WeWatch/frontend/src/components/OnboardingTour.jsx
 // Full-screen swipeable tour shown once to brand-new signups, before they see the Lobby.
-// Explains the 4 main tabs + Community Events, then ends on a content-preference picker
-// whose chips map to the existing content_rating values without ever showing raw codes
-// like "18+" or "16+" to the user.
+// Explains the 4 main tabs + Community Events, then ends on a content-rating
+// preference picker (ContentRatingPreferencePicker, shared with
+// UserPreferencesModal's Content Preferences — editable again any time from
+// there, not a one-time-only choice). Multi-select: unlike the old
+// single-choice version, a user can pick several rating cards at once — each
+// card maps to real content_rating value(s) without ever showing a raw code
+// like "18+" or "16+" as the visible label.
 import React, { useState, useRef } from 'react';
-import { updateUserSettings } from '../services/api';
 import toast from 'react-hot-toast';
+import ContentRatingPreferencePicker from './ContentRatingPreferencePicker';
+import { useContentRatingPreferences } from '../hooks/useContentRatingPreferences';
 
 const INFO_SLIDES = [
   {
@@ -45,45 +50,11 @@ const INFO_SLIDES = [
   },
 ];
 
-const RATING_SECTIONS = [
-  {
-    title: 'General Entertainment',
-    items: [
-      { value: 'G',   chips: ['🍿 Family & General', '😊 All Ages', '😂 Comedy', '📖 Books & Stories', '🎞️ Vintage Classics', '📰 News', '🤝 Community'] },
-      { value: 'PG',  chips: ['🎬 Indie Films', '📺 Shows', '⚽ Sports', '🎤 Live Events', '👨‍👩‍👧 Family Movie Night'] },
-      { value: '13+', chips: ['🎮 Gaming', '🌸 Anime', '✍️ Fan Fiction', '💫 Teen Drama'] },
-      { value: '16+', chips: ['🔥 Action & Thriller', '👻 Horror', '💼 Business & Finance'] },
-    ],
-  },
-  {
-    title: 'Faith & Worship',
-    items: [
-      { value: 'Religious', chips: ['✝️ Church & Worship', '🙏 Bible Study'] },
-    ],
-  },
-  {
-    title: 'Learning',
-    items: [
-      { value: 'Educational', chips: ['📚 Classes & Tutorials', '🧪 Science & Tech', '📖 Book Clubs'] },
-    ],
-  },
-  {
-    title: 'Mature Audiences',
-    caption: 'May contain strong language, violence, gore or explicit scenes. For adults only.',
-    items: [
-      { value: '18+',    chips: ['🔞 Adults Only', '🌙 Late Night'] },
-      { value: 'Mature', chips: ['🔒 Mature Audiences', '🎭 Strong Content'] },
-    ],
-  },
-];
-
 const TOTAL_SLIDES = INFO_SLIDES.length + 1; // + the preference slide
 
 export default function OnboardingTour({ onClose }) {
   const [slide, setSlide] = useState(0);
-  const [selectedRating, setSelectedRating] = useState(null);
-  const [selectedChipKey, setSelectedChipKey] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const { selectedCardIds, setSelectedCardIds, saving, save } = useContentRatingPreferences();
   const touchRef = useRef(null);
 
   const isLast = slide === TOTAL_SLIDES - 1;
@@ -93,15 +64,12 @@ export default function OnboardingTour({ onClose }) {
   const prev = () => goTo(slide - 1);
 
   const finish = async (savePreference) => {
-    if (savePreference && selectedRating) {
-      setSaving(true);
-      try {
-        await updateUserSettings({ primary_rating: selectedRating });
+    if (savePreference && selectedCardIds.length > 0) {
+      const ok = await save(selectedCardIds);
+      if (ok) {
         toast.success('Preferences saved — your feed is personalised!');
-      } catch {
+      } else {
         toast.error('Could not save preferences');
-      } finally {
-        setSaving(false);
       }
     }
     onClose();
@@ -146,37 +114,11 @@ export default function OnboardingTour({ onClose }) {
             </div>
           ) : (
             <div className="px-6 py-6">
-              <h2 className="text-xl font-bold text-white mb-1">What do you love watching?</h2>
+              <h2 className="text-xl font-bold text-white mb-1">What do you want to see?</h2>
               <p className="text-sm text-gray-400 mb-5">
-                Pick what excites you most — we'll show you more of it first. You can change this any time in Settings.
+                Pick as many as you like — we'll show you more of these first. You can change this any time in Settings → Content Preferences.
               </p>
-              {RATING_SECTIONS.map(section => (
-                <div key={section.title} className="mb-5">
-                  <h3 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">{section.title}</h3>
-                  {section.caption && (
-                    <p className="text-[11px] text-gray-500 mb-2 italic leading-snug">{section.caption}</p>
-                  )}
-                  <div className="flex flex-wrap gap-2">
-                    {section.items.flatMap(item => item.chips.map((chip, ci) => {
-                      const chipKey = `${item.value}-${ci}`;
-                      return (
-                        <button
-                          key={chipKey}
-                          type="button"
-                          onClick={() => { setSelectedRating(item.value); setSelectedChipKey(chipKey); }}
-                          className={`px-3 py-2 rounded-full text-xs font-medium border transition-all ${
-                            selectedChipKey === chipKey
-                              ? 'border-white bg-white text-gray-900'
-                              : 'border-gray-700 text-gray-300 hover:border-gray-500'
-                          }`}
-                        >
-                          {chip}
-                        </button>
-                      );
-                    }))}
-                  </div>
-                </div>
-              ))}
+              <ContentRatingPreferencePicker selectedCardIds={selectedCardIds} onChange={setSelectedCardIds} />
             </div>
           )}
         </div>
@@ -206,7 +148,7 @@ export default function OnboardingTour({ onClose }) {
             )}
             <button
               onClick={isLast ? () => finish(true) : next}
-              disabled={isLast && (!selectedRating || saving)}
+              disabled={isLast && (selectedCardIds.length === 0 || saving)}
               className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-semibold transition-colors"
             >
               {isLast ? (saving ? 'Saving…' : 'Get Started') : 'Next →'}
