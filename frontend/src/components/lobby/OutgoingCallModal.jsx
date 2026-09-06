@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Avatar from '../Avatar';
+import MinimizedCallWidget from './MinimizedCallWidget';
 
 const RINGBACK_URL = 'https://letswatchout.b-cdn.net/sounds/outgoing-ringback.wav';
 
@@ -16,10 +17,19 @@ const STATUS = {
   no_answer: { color: 'text-purple-400/60' },
 };
 
-const OutgoingCallModal = ({ isOpen, friend, onCancel, callStatus = 'calling' }) => {
+const OutgoingCallModal = ({ isOpen, friend, currentUser, onCancel, callStatus = 'calling' }) => {
   const [elapsed, setElapsed] = useState(0);
   const [dots, setDots] = useState('');
+  const [isMinimized, setIsMinimized] = useState(false);
   const ringbackRef = useRef(null);
+
+  // Reset minimize state on close, and force back to fullscreen the instant
+  // the call resolves to anything other than "still ringing" — a declined/
+  // busy/no-answer outcome should never sit silently minimized, unseen.
+  useEffect(() => {
+    if (!isOpen) { setIsMinimized(false); return; }
+    if (callStatus !== 'calling') setIsMinimized(false);
+  }, [isOpen, callStatus]);
 
   useEffect(() => {
     if (!isOpen) { setElapsed(0); setDots(''); return; }
@@ -57,6 +67,23 @@ const OutgoingCallModal = ({ isOpen, friend, onCancel, callStatus = 'calling' })
   }[callStatus] ?? 'Calling';
   const statusColor = (STATUS[callStatus] ?? STATUS.calling).color;
 
+  // Minimized view — vertical draggable widget, both avatars stacked. Only
+  // reachable while still actively ringing (isCalling) — the effect above
+  // forces back to fullscreen the instant the call resolves, so a
+  // declined/busy/no-answer outcome is never silently missed.
+  if (isMinimized) {
+    return (
+      <MinimizedCallWidget
+        selfUser={currentUser}
+        otherUser={friend}
+        statusText={statusText}
+        isRinging
+        onExpand={() => setIsMinimized(false)}
+        onEndCall={onCancel}
+      />
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-between py-16 px-6 overflow-hidden">
       {/* Background */}
@@ -66,6 +93,18 @@ const OutgoingCallModal = ({ isOpen, friend, onCancel, callStatus = 'calling' })
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
         <img src="/icons/lwoIcon.png" alt="" className="w-96 h-96 opacity-[0.04]" style={{ filter: 'blur(6px)' }} />
       </div>
+
+      {/* Minimize button */}
+      <button
+        onClick={() => setIsMinimized(true)}
+        className="absolute top-4 right-4 z-20 text-white/60 hover:text-white transition-colors p-2"
+        title="Minimize"
+        aria-label="Minimize"
+      >
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+        </svg>
+      </button>
 
       {/* Brand icon */}
       <img src="/icons/lwoIcon.png" alt="" className="relative z-10 w-8 h-8 opacity-60" />

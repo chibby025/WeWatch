@@ -7128,6 +7128,7 @@ const LobbyPage = () => {
       <OutgoingCallModal
         isOpen={!!outgoingCall}
         friend={outgoingCall?.user}
+        currentUser={currentUser}
         callStatus={outgoingCall?.status}
         onCancel={cancelOutgoingCall}
       />
@@ -7142,6 +7143,7 @@ const LobbyPage = () => {
       <ActiveCallInterface
         isOpen={!!activeCall}
         friend={activeCall?.user}
+        currentUser={currentUser}
         room={activeCall?.room}
         livekitRoom={callRoom}
         onEndCall={handleEndCall}

@@ -4,10 +4,12 @@ import { Track } from 'livekit-client';
 import Avatar from '../Avatar';
 import useNetworkQuality from '../../hooks/useNetworkQuality';
 import NetworkQualityBanner from '../NetworkQualityBanner';
+import MinimizedCallWidget from './MinimizedCallWidget';
 
 const ActiveCallInterface = ({
   isOpen,
   friend,
+  currentUser,
   room,
   livekitRoom,
   onEndCall,
@@ -99,43 +101,22 @@ const ActiveCallInterface = ({
 
   if (!isOpen) return null;
 
-  // Minimized view (floating pill)
+  // Minimized view — vertical draggable widget, both avatars stacked
+  // (WhatsApp/Snapchat-style), replacing the old single-avatar pill.
   if (isMinimized) {
     return (
-      <div className="fixed top-4 right-4 z-[9999] bg-gray-900 rounded-full shadow-2xl border-2 border-green-500 px-4 py-2 flex items-center gap-3 animate-pulse">
-        {/* Avatar */}
-        <Avatar user={friend} className="w-8 h-8 rounded-full object-cover" />
-
-        {/* Timer */}
-        <span className="text-white text-sm font-mono">
-          {formatTime(callDuration)}
-        </span>
-
-        {/* Expand button */}
-        <button
-          onClick={() => setIsMinimized(false)}
-          className="text-white hover:text-gray-300 transition-colors"
-          title="Expand"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-5v4m0-4h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
-          </svg>
-        </button>
-
-        {/* End call button */}
-        <button
-          onClick={onEndCall}
-          className="bg-red-600 hover:bg-red-700 text-white rounded-full p-2 transition-colors"
-          title="End call"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-
-        {/* Hidden audio elements */}
+      <>
+        <MinimizedCallWidget
+          selfUser={currentUser}
+          otherUser={friend}
+          statusText={formatTime(callDuration)}
+          isRinging={false}
+          onExpand={() => setIsMinimized(false)}
+          onEndCall={onEndCall}
+        />
+        {/* Hidden audio elements — must keep rendering while minimized so the call audio doesn't drop */}
         <div ref={remoteAudioRef} className="hidden" />
-      </div>
+      </>
     );
   }
 
